@@ -1,7 +1,6 @@
 package database
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 )
@@ -20,24 +19,32 @@ func TestOpenAndMigrate(t *testing.T) {
 		t.Fatalf("migrate database: %v", err)
 	}
 
-	var count int
-
-	err = db.QueryRow(`
-		SELECT COUNT(*)
-		FROM sqlite_master
-		WHERE type = 'table'
-		AND name NOT LIKE 'sqlite_%'
-	`).Scan(&count)
-
-	if err != nil {
-		t.Fatalf("count tables: %v", err)
+	expectedTables := []string{
+		"job_sources",
+		"candidates",
+		"jobs",
+		"job_scores",
+		"resumes",
+		"applications",
+		"application_events",
 	}
 
-	if count != 7 {
-		t.Fatalf("expected 7 tables, got %d", count)
-	}
+	for _, table := range expectedTables {
+		var count int
 
-	if _, err := os.Stat(dbPath); err != nil {
-		t.Fatalf("database file does not exist: %v", err)
+		err := db.QueryRow(`
+			SELECT COUNT(*)
+			FROM sqlite_master
+			WHERE type = 'table'
+			AND name = ?
+		`, table).Scan(&count)
+
+		if err != nil {
+			t.Fatalf("check table %q: %v", table, err)
+		}
+
+		if count != 1 {
+			t.Errorf("expected table %q to exist", table)
+		}
 	}
 }
