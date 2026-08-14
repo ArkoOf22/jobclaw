@@ -1,0 +1,11 @@
+# Build artifacts
+bin/jobclaw
+
+# Local runtime data
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# Go tooling
+*.test
+coverage.out
