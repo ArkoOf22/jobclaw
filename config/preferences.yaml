@@ -1,0 +1,130 @@
+job_preferences:
+
+  company_type:
+    primary: "product"
+
+    preferred:
+      - "Product Company"
+      - "Technology Product Company"
+      - "Fintech Product"
+      - "SaaS Product"
+      - "Consumer Internet Product"
+      - "Developer Tools"
+      - "AI Product"
+      - "Cloud Infrastructure Product"
+      - "Marketplace Product"
+      - "E-commerce Product"
+
+    excluded:
+      - "IT Services"
+      - "IT Consulting"
+      - "Technology Consulting"
+      - "Outsourcing"
+      - "Staff Augmentation"
+      - "Body Shopping"
+
+    require_product_company: true
+
+  roles:
+    preferred:
+      - "Software Development Engineer"
+      - "Backend Engineer"
+      - "SDE I"
+      - "SDE II"
+
+    acceptable:
+      - "Software Engineer"
+      - "Platform Engineer"
+      - "Distributed Systems Engineer"
+
+    excluded:
+      - "Frontend Engineer"
+      - "UI Engineer"
+      - "QA Engineer"
+      - "Manual Tester"
+      - "Data Analyst"
+      - "Support Engineer"
+      - "Implementation Engineer"
+      - "Technical Support Engineer"
+
+  locations:
+    preferred:
+      - "Bangalore"
+      - "Bengaluru"
+
+    acceptable:
+      - "Remote"
+      - "Hyderabad"
+      - "Pune"
+      - "Mumbai"
+      - "Gurgaon"
+      - "Delhi NCR"
+
+  work_mode:
+    preferred:
+      - "Hybrid"
+      - "Onsite"
+      - "Remote"
+
+  compensation:
+    currency: "INR"
+    target_min_lpa: 21
+    target_max_lpa: 23
+
+  domains:
+    strongly_preferred:
+      - "Fintech"
+      - "Payments"
+      - "Banking Technology"
+      - "Consumer Internet"
+      - "SaaS"
+      - "E-commerce"
+      - "Developer Tools"
+      - "AI Infrastructure"
+      - "Cloud Infrastructure"
+      - "Distributed Systems"
+
+    preferred:
+      - "Marketplace"
+      - "Logistics Technology"
+      - "Gaming"
+      - "Cybersecurity"
+
+  technology_preferences:
+    strongly_preferred:
+      - "Go"
+      - "Golang"
+      - "Distributed Systems"
+      - "Kafka"
+      - "Microservices"
+      - "Backend"
+      - "PostgreSQL"
+      - "Redis"
+      - "Concurrency"
+      - "Idempotency"
+
+    preferred:
+      - "Java"
+      - "Spring Boot"
+      - "gRPC"
+      - "AWS"
+      - "Kubernetes"
+      - "Docker"
+      - "Prometheus"
+      - "Grafana"
+
+  job_quality:
+    minimum_score_for_shortlist: 70
+    minimum_score_for_apply: 80
+    minimum_score_for_autopilot: 90
+
+  application_policy:
+    max_applications_per_day: 10
+    require_human_approval: true
+    allow_autonomous_submission: false
+
+  exclusions:
+    internships: true
+    unpaid_roles: true
+    roles_without_clear_job_description: true
+    service_based_companies: true

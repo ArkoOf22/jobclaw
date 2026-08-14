@@ -1,0 +1,101 @@
+candidate:
+  name: "Arkodeep Koley"
+
+  current_role:
+    title: "Software Development Engineer"
+    company: "Twid"
+    location: "Bangalore, India"
+    started: "2025-01"
+
+  experience:
+    total_years: 2
+    primary_domain: "Backend Engineering"
+
+  target_roles:
+    primary:
+      - "Software Development Engineer"
+      - "Backend Engineer"
+      - "SDE I"
+      - "SDE II"
+
+    secondary:
+      - "Software Engineer"
+      - "Platform Engineer"
+      - "Distributed Systems Engineer"
+
+  skills:
+    languages:
+      - Go
+      - Java
+      - SQL
+      - Python
+
+    backend:
+      - Microservices
+      - REST APIs
+      - gRPC
+      - Event-Driven Architecture
+      - Kafka
+      - Redis
+      - Idempotency
+      - Concurrency
+
+    databases:
+      - PostgreSQL
+      - Redis
+
+    cloud_infrastructure:
+      - AWS
+      - EC2
+      - S3
+      - IAM
+      - Docker
+      - Kubernetes
+      - Jenkins
+      - Git
+
+    observability:
+      - Prometheus
+      - Grafana
+      - ELK Stack
+
+    ai_engineering:
+      - LLM APIs
+      - OpenRouter
+      - Intelligent Routing
+      - Retries
+      - Fallback Routing
+      - Prompt Design
+      - Cost Optimization
+
+  domain_experience:
+    - Fintech
+    - Payments
+    - Wallet Systems
+    - Banking Integrations
+    - Loyalty Systems
+    - Distributed Systems
+
+  experience_highlights:
+    - "Owned integrations across 18 external banking and loyalty issuers."
+    - "Built a Go microservice platform exposing unified idempotent redemption, refund, and accrual APIs."
+    - "Designed a config-driven Issuer Service Proxy for routing, orchestration, and load balancing."
+    - "Reduced new-issuer onboarding to 1.5 days from development to QA handoff."
+    - "Delivered 10+ production payment integrations and platform enhancements."
+    - "Worked on initiatives contributing to over Rs.40 Cr in gross merchandise value."
+    - "Reduced production log volume by 92%, from 444M to 33M lines/day."
+    - "Reduced log storage from 240GB to 53GB/day."
+    - "Implemented panic recovery, runtime diagnostics, distributed tracing, and Slack-based alerting."
+    - "Resolved production concurrency and race-condition issues in wallet synchronization, issuer mapping, and expiry workflows."
+    - "Optimized Java heap utilization at Maersk, reducing memory consumption by approximately 50%."
+    - "Built a data ingestion pipeline processing 15,000 records/day."
+
+  achievements:
+    - "Solved 300+ Data Structures and Algorithms problems on LeetCode."
+    - "Winner of Twid Hackathon."
+
+  education:
+    degree: "B.E. in Information Science"
+    institution: "Ramaiah Institute of Technology"
+    graduation_year: 2024
+    cgpa: 9.17
