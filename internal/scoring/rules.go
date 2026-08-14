@@ -197,13 +197,26 @@ func extractMinimumYears(text string) (float64, bool) {
 			continue
 		}
 
+		if !strings.Contains(strings.ToLower(words[i+1]), "year") {
+			continue
+		}
+
 		value := strings.Trim(
 			words[i],
-			"()[]{}:;,.-",
+			"()[]{}:;,",
 		)
 
-		if !strings.Contains(words[i+1], "year") {
-			continue
+		// Handle:
+		//   2 years
+		//   2+ years
+		//   2-4 years
+		//   2–4 years
+		value = strings.TrimSuffix(value, "+")
+		value = strings.ReplaceAll(value, "–", "-")
+
+		// For ranges, use the lower bound.
+		if idx := strings.Index(value, "-"); idx >= 0 {
+			value = value[:idx]
 		}
 
 		n, err := strconv.ParseFloat(value, 64)

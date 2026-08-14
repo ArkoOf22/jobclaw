@@ -226,27 +226,27 @@ func (r *SQLiteRepository) List(
 	}
 
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT
-			j.id,
-			j.external_id,
-			js.name,
-			j.company,
-			j.title,
-			j.description,
-			j.location,
-			j.remote_type,
-			j.employment_type,
-			j.salary_min,
-			j.salary_max,
-			j.currency,
-			j.url,
-			j.posted_at,
-			j.discovered_at
-		FROM jobs j
-		JOIN job_sources js ON js.id = j.source_id
-		ORDER BY j.discovered_at DESC
-		LIMIT ?
-	`, limit)
+                SELECT
+                        j.id,
+                        j.external_id,
+                        js.name,
+                        j.company,
+                        j.title,
+                        j.description,
+                        j.location,
+                        j.remote_type,
+                        j.employment_type,
+                        j.salary_min,
+                        j.salary_max,
+                        j.currency,
+                        j.url,
+                        j.posted_at,
+                        j.discovered_at
+                FROM jobs j
+                JOIN job_sources js ON js.id = j.source_id
+                ORDER BY j.discovered_at DESC
+                LIMIT ?
+        `, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list jobs: %w", err)
 	}
@@ -256,9 +256,12 @@ func (r *SQLiteRepository) List(
 
 	for rows.Next() {
 		var (
-			j            Job
-			postedAt     sql.NullString
-			discoveredAt string
+			j              Job
+			remoteType     sql.NullString
+			employmentType sql.NullString
+			currency       sql.NullString
+			postedAt       sql.NullString
+			discoveredAt   sql.NullString
 		)
 
 		if err := rows.Scan(
@@ -269,16 +272,28 @@ func (r *SQLiteRepository) List(
 			&j.Title,
 			&j.Description,
 			&j.Location,
-			&j.RemoteType,
-			&j.EmploymentType,
+			&remoteType,
+			&employmentType,
 			&j.SalaryMin,
 			&j.SalaryMax,
-			&j.Currency,
+			&currency,
 			&j.URL,
 			&postedAt,
 			&discoveredAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan job: %w", err)
+		}
+
+		if remoteType.Valid {
+			j.RemoteType = remoteType.String
+		}
+
+		if employmentType.Valid {
+			j.EmploymentType = employmentType.String
+		}
+
+		if currency.Valid {
+			j.Currency = currency.String
 		}
 
 		if postedAt.Valid && postedAt.String != "" {
@@ -290,8 +305,8 @@ func (r *SQLiteRepository) List(
 			j.PostedAt = &t
 		}
 
-		if discoveredAt != "" {
-			t, err := parseTime(discoveredAt)
+		if discoveredAt.Valid && discoveredAt.String != "" {
+			t, err := parseTime(discoveredAt.String)
 			if err != nil {
 				return nil, fmt.Errorf("parse discovered_at: %w", err)
 			}
