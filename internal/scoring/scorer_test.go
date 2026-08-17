@@ -169,3 +169,53 @@ func TestScorerExcludedRole(t *testing.T) {
 		)
 	}
 }
+
+func TestScorerRejectsWeakCandidateSkillMatch(t *testing.T) {
+	cfg := testPreferences()
+
+	scorer := NewScorer(
+		config.Candidate{
+			Experience: config.Experience{
+				TotalYears: 2,
+			},
+			Skills: config.Skills{
+				Languages: []string{
+					"Go",
+				},
+			},
+			DomainExperience: []string{
+				"Fintech",
+			},
+		},
+		cfg,
+	)
+
+	j := job.Job{
+		Title:       "Backend Engineer",
+		Description: "We require Go, Kafka, Redis, Kubernetes and PostgreSQL.",
+		Location:    "Bengaluru",
+	}
+
+	c := company.Company{
+		Classification: company.ClassificationProduct,
+	}
+
+	result := scorer.Score(j, c)
+
+	t.Logf(
+		"score=%.1f recommendation=%s reasoning=%s",
+		result.OverallScore,
+		result.Recommendation,
+		result.Reasoning,
+	)
+
+	if result.Recommendation == RecommendationShortlist ||
+		result.Recommendation == RecommendationApply {
+		t.Fatalf(
+			"weak candidate match should not be shortlisted: score=%.1f recommendation=%s reasoning=%s",
+			result.OverallScore,
+			result.Recommendation,
+			result.Reasoning,
+		)
+	}
+}

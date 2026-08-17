@@ -126,6 +126,7 @@ func (r *SQLiteRepository) GetBySourceExternalID(
 	row := r.db.QueryRowContext(ctx, `
 		SELECT
 			j.id,
+			j.status,
 			j.external_id,
 			js.name,
 			j.company,
@@ -160,6 +161,7 @@ func (r *SQLiteRepository) GetBySourceExternalID(
 
 	err := row.Scan(
 		&j.ID,
+		&j.Status,
 		&j.ExternalID,
 		&j.Source,
 		&j.Company,
@@ -228,6 +230,7 @@ func (r *SQLiteRepository) List(
 	rows, err := r.db.QueryContext(ctx, `
                 SELECT
                         j.id,
+                        j.status,
                         j.external_id,
                         js.name,
                         j.company,
@@ -266,6 +269,7 @@ func (r *SQLiteRepository) List(
 
 		if err := rows.Scan(
 			&j.ID,
+			&j.Status,
 			&j.ExternalID,
 			&j.Source,
 			&j.Company,
@@ -358,6 +362,7 @@ func (r *SQLiteRepository) GetByID(
 	row := r.db.QueryRowContext(ctx, `
 		SELECT
 			j.id,
+			j.status,
 			j.external_id,
 			js.name,
 			j.company,
@@ -388,6 +393,7 @@ func (r *SQLiteRepository) GetByID(
 
 	if err := row.Scan(
 		&j.ID,
+		&j.Status,
 		&j.ExternalID,
 		&j.Source,
 		&j.Company,
@@ -472,4 +478,38 @@ func (r *SQLiteRepository) GetCompanyIDByJobID(
 	}
 
 	return companyID.Int64, nil
+}
+
+func (r *SQLiteRepository) UpdateStatus(
+	ctx context.Context,
+	id int64,
+	status Status,
+) error {
+	if id <= 0 {
+		return fmt.Errorf("job ID must be positive")
+	}
+
+	if status == "" {
+		return fmt.Errorf("job status is required")
+	}
+
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE jobs
+		SET status = ?
+		WHERE id = ?
+	`, string(status), id)
+	if err != nil {
+		return fmt.Errorf("update job status: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check job status update: %w", err)
+	}
+
+	if rows == 0 {
+		return fmt.Errorf("job %d not found", id)
+	}
+
+	return nil
 }

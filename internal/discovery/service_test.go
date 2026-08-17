@@ -51,6 +51,34 @@ func (r *fakeRepository) List(
 	return r.jobs, nil
 }
 
+func (r *fakeRepository) GetByID(
+	ctx context.Context,
+	id int64,
+) (*job.Job, error) {
+	for i := range r.jobs {
+		if r.jobs[i].ID == id {
+			return &r.jobs[i], nil
+		}
+	}
+
+	return nil, nil
+}
+
+func (r *fakeRepository) UpdateStatus(
+	ctx context.Context,
+	id int64,
+	status job.Status,
+) error {
+	for i := range r.jobs {
+		if r.jobs[i].ID == id {
+			r.jobs[i].Status = status
+			return nil
+		}
+	}
+
+	return nil
+}
+
 func TestServiceDiscoversAndStoresJobs(t *testing.T) {
 	repository := &fakeRepository{}
 

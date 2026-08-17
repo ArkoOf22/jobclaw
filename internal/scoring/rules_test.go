@@ -1,6 +1,10 @@
 package scoring
 
-import "testing"
+import (
+	"testing"
+
+	"jobclaw/internal/config"
+)
 
 func TestExtractMinimumYears(t *testing.T) {
 	tests := []struct {
@@ -104,6 +108,46 @@ func TestScoreCandidateDomain(t *testing.T) {
 	match.MatchedDomains = 2
 
 	if got := scoreCandidateDomain(match); got != 5 {
+		t.Fatalf("score = %.1f, want 5.0", got)
+	}
+}
+
+func TestScoreExperienceMissingRequirementIsFullScore(t *testing.T) {
+	if got := scoreExperience(
+		"Build scalable backend systems with Go and Kafka",
+		2,
+	); got != 15 {
+		t.Fatalf("score = %.1f, want 15.0", got)
+	}
+}
+
+func TestScoreExperienceThreeYearsForTwoYearCandidate(t *testing.T) {
+	if got := scoreExperience(
+		"3+ years of backend engineering experience",
+		2,
+	); got != 10 {
+		t.Fatalf("score = %.1f, want 10.0", got)
+	}
+}
+
+func TestScoreLocationUnknownGetsPartialScore(t *testing.T) {
+	locations := config.Locations{
+		Preferred:  []string{"Bangalore", "Bengaluru"},
+		Acceptable: []string{"Remote", "Hyderabad"},
+	}
+
+	if got := scoreLocation("", locations); got != 5 {
+		t.Fatalf("score = %.1f, want 5.0", got)
+	}
+}
+
+func TestScoreCompensationMissingGetsNeutralScore(t *testing.T) {
+	compensation := config.Compensation{
+		TargetMinLPA: 21,
+		TargetMaxLPA: 23,
+	}
+
+	if got := scoreCompensation(nil, nil, compensation); got != 5 {
 		t.Fatalf("score = %.1f, want 5.0", got)
 	}
 }

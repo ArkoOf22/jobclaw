@@ -74,3 +74,65 @@ func TestSQLiteRepositoryUpsertCreatesCompanyLink(t *testing.T) {
 		)
 	}
 }
+
+func TestSQLiteRepositoryUpdateStatus(t *testing.T) {
+	db, err := database.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := db.MigrateEmbedded(); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := NewSQLiteRepository(db)
+
+	ctx := context.Background()
+
+	if err := repo.Upsert(ctx, Job{
+		Source:      "test",
+		ExternalID:  "status-test",
+		Company:     "Setu",
+		Title:       "Backend Engineer",
+		Description: "Backend systems",
+		Location:    "Bengaluru",
+		URL:         "https://example.com/status-test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	j, err := repo.GetBySourceExternalID(ctx, "test", "status-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if j == nil {
+		t.Fatal("expected job")
+	}
+
+	if err := repo.UpdateStatus(
+		ctx,
+		j.ID,
+		StatusScored,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := repo.GetByID(ctx, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if updated == nil {
+		t.Fatal("expected updated job")
+	}
+
+	if updated.Status != StatusScored {
+		t.Fatalf(
+			"status = %q, want %q",
+			updated.Status,
+			StatusScored,
+		)
+	}
+}

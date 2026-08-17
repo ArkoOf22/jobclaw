@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"sort"
 
 	"jobclaw/internal/company"
 	"jobclaw/internal/config"
@@ -12,11 +11,6 @@ import (
 	"jobclaw/internal/job"
 	"jobclaw/internal/scoring"
 )
-
-type scoredJob struct {
-	Job    job.Job
-	Result scoring.Result
-}
 
 func main() {
 	ctx := context.Background()
@@ -56,30 +50,21 @@ func main() {
 		log.Fatal(err)
 	}
 
-	var scored []scoredJob
-
 	for _, j := range jobs {
-		result, err := service.ScoreJob(ctx, j.ID)
-		if err != nil {
+		if _, err := service.ScoreJob(ctx, j.ID); err != nil {
 			log.Printf(
-				"skip job %d (%s): %v",
+				"score job %d (%s): %v",
 				j.ID,
 				j.Title,
 				err,
 			)
-			continue
 		}
-
-		scored = append(scored, scoredJob{
-			Job:    j,
-			Result: *result,
-		})
 	}
 
-	sort.SliceStable(scored, func(i, j int) bool {
-		return scored[i].Result.OverallScore >
-			scored[j].Result.OverallScore
-	})
+	scores, err := scoreRepo.List(ctx, 1000)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	fmt.Println()
 	fmt.Println("========================================")
@@ -87,28 +72,42 @@ func main() {
 	fmt.Println("========================================")
 	fmt.Println()
 
-	for i, item := range scored {
+	for i, score := range scores {
+		j, err := jobRepo.GetByID(ctx, score.JobID)
+		if err != nil {
+			log.Printf(
+				"load job %d: %v",
+				score.JobID,
+				err,
+			)
+			continue
+		}
+
+		if j == nil {
+			continue
+		}
+
 		fmt.Printf(
 			"%d. %s — %s\n",
 			i+1,
-			item.Job.Company,
-			item.Job.Title,
+			j.Company,
+			j.Title,
 		)
 
 		fmt.Printf(
 			"   Score: %.1f | Recommendation: %s\n",
-			item.Result.OverallScore,
-			item.Result.Recommendation,
+			score.OverallScore,
+			score.Recommendation,
 		)
 
 		fmt.Printf(
 			"   %s\n",
-			item.Result.Reasoning,
+			score.Reasoning,
 		)
 
 		fmt.Printf(
 			"   %s\n",
-			item.Job.URL,
+			j.URL,
 		)
 
 		fmt.Println()
@@ -116,8 +115,8 @@ func main() {
 
 	var apply, shortlist, skip int
 
-	for _, item := range scored {
-		switch item.Result.Recommendation {
+	for _, score := range scores {
+		switch score.Recommendation {
 		case scoring.RecommendationApply:
 			apply++
 		case scoring.RecommendationShortlist:
@@ -130,7 +129,7 @@ func main() {
 	fmt.Println("========================================")
 	fmt.Println("Summary")
 	fmt.Println("========================================")
-	fmt.Printf("Total:      %d\n", len(scored))
+	fmt.Printf("Total:      %d\n", len(scores))
 	fmt.Printf("APPLY:      %d\n", apply)
 	fmt.Printf("SHORTLIST:  %d\n", shortlist)
 	fmt.Printf("SKIP:       %d\n", skip)

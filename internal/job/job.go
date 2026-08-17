@@ -3,7 +3,8 @@ package job
 import "time"
 
 type Job struct {
-	ID int64
+	ID     int64
+	Status Status
 
 	Source         string
 	ExternalID     string

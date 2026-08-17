@@ -66,5 +66,18 @@ func (s *Service) ScoreJob(
 		return nil, fmt.Errorf("persist score: %w", err)
 	}
 
+	targetStatus := job.StatusScored
+
+	if result.Recommendation == RecommendationShortlist {
+		targetStatus = job.StatusShortlisted
+	}
+
+	if j.Status != targetStatus &&
+		job.CanTransition(j.Status, targetStatus) {
+		if err := s.jobs.UpdateStatus(ctx, jobID, targetStatus); err != nil {
+			return nil, fmt.Errorf("update job status: %w", err)
+		}
+	}
+
 	return &result, nil
 }
