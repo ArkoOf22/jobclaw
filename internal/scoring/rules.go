@@ -8,14 +8,17 @@ import (
 	"jobclaw/internal/config"
 )
 
-func scoreSkills(text string, preferences config.TechnologyPreferences) float64 {
-	const maxScore = 30.0
+func scoreSkills(
+	text string,
+	preferences config.TechnologyPreferences,
+) float64 {
+	const maxScore = 20.0
 
 	strongMatches := countMatches(text, preferences.StronglyPreferred)
 	preferredMatches := countMatches(text, preferences.Preferred)
 
-	score := float64(strongMatches)*3.0 +
-		float64(preferredMatches)*1.5
+	score := float64(strongMatches)*2.0 +
+		float64(preferredMatches)*1.0
 
 	if score > maxScore {
 		return maxScore
@@ -24,9 +27,17 @@ func scoreSkills(text string, preferences config.TechnologyPreferences) float64 
 	return score
 }
 
-func scoreRole(title string, roles config.Roles) float64 {
-	title = strings.ToLower(title)
+func scoreCandidateSkills(match CandidateMatch) float64 {
+	const maxScore = 10.0
 
+	if match.RequiredSkills == 0 {
+		return 0
+	}
+
+	return maxScore * match.SkillMatchRatio()
+}
+
+func scoreRole(title string, roles config.Roles) float64 {
 	if containsAny(title, roles.Excluded) {
 		return 0
 	}
@@ -46,7 +57,7 @@ func scoreExperience(text string, candidateYears float64) float64 {
 	requiredMin, found := extractMinimumYears(text)
 
 	if !found {
-		return 10
+		return 15
 	}
 
 	switch {
@@ -77,11 +88,24 @@ func scoreDomain(text string, domains config.Domains) float64 {
 	return score
 }
 
-func scoreLocation(location string, locations config.Locations) float64 {
+func scoreCandidateDomain(match CandidateMatch) float64 {
+	const maxScore = 5.0
+
+	if match.RequiredDomains == 0 {
+		return 0
+	}
+
+	return maxScore * match.DomainMatchRatio()
+}
+
+func scoreLocation(
+	location string,
+	locations config.Locations,
+) float64 {
 	location = strings.ToLower(strings.TrimSpace(location))
 
 	if location == "" {
-		return 3
+		return 5
 	}
 
 	if containsAny(location, locations.Preferred) {
@@ -100,14 +124,14 @@ func scoreCompany(
 	preferences config.CompanyType,
 ) float64 {
 	if classification == company.ClassificationProduct {
-		return 10
+		return 5
 	}
 
 	if classification == company.ClassificationServices {
 		return 0
 	}
 
-	return 5
+	return 2.5
 }
 
 func scoreCompensation(
@@ -115,8 +139,6 @@ func scoreCompensation(
 	salaryMax *int,
 	compensation config.Compensation,
 ) float64 {
-	// Salary is optional in the job model.
-	// Missing salary should not destroy an otherwise strong match.
 	if salaryMin == nil && salaryMax == nil {
 		return 5
 	}
@@ -167,7 +189,7 @@ func countMatches(text string, terms []string) int {
 			continue
 		}
 
-		if strings.Contains(text, strings.ToLower(term)) {
+		if containsTerm(text, term) {
 			count++
 		}
 	}
@@ -176,12 +198,8 @@ func countMatches(text string, terms []string) int {
 }
 
 func containsAny(text string, terms []string) bool {
-	text = strings.ToLower(text)
-
 	for _, term := range terms {
-		term = strings.TrimSpace(term)
-
-		if term != "" && strings.Contains(text, strings.ToLower(term)) {
+		if containsTerm(text, term) {
 			return true
 		}
 	}
@@ -206,15 +224,9 @@ func extractMinimumYears(text string) (float64, bool) {
 			"()[]{}:;,",
 		)
 
-		// Handle:
-		//   2 years
-		//   2+ years
-		//   2-4 years
-		//   2–4 years
 		value = strings.TrimSuffix(value, "+")
 		value = strings.ReplaceAll(value, "–", "-")
 
-		// For ranges, use the lower bound.
 		if idx := strings.Index(value, "-"); idx >= 0 {
 			value = value[:idx]
 		}

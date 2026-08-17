@@ -28,8 +28,13 @@ func testPreferences() config.JobPreferences {
 			TargetMaxLPA: 23,
 		},
 		Domains: config.Domains{
-			StronglyPreferred: []string{"Fintech", "SaaS", "Distributed Systems"},
-			Preferred:         []string{"Cybersecurity"},
+			StronglyPreferred: []string{
+				"Fintech",
+				"Payments",
+				"SaaS",
+				"Distributed Systems",
+			},
+			Preferred: []string{"Cybersecurity"},
 		},
 		TechnologyPreferences: config.TechnologyPreferences{
 			StronglyPreferred: []string{
@@ -37,6 +42,7 @@ func testPreferences() config.JobPreferences {
 				"Kafka",
 				"Redis",
 				"Backend",
+				"PostgreSQL",
 				"Concurrency",
 			},
 			Preferred: []string{
@@ -57,6 +63,25 @@ func TestScorerStrongBackendRole(t *testing.T) {
 		config.Candidate{
 			Experience: config.Experience{
 				TotalYears: 2,
+			},
+			Skills: config.Skills{
+				Languages: []string{
+					"Go",
+					"Java",
+				},
+				Backend: []string{
+					"Kafka",
+					"Redis",
+					"Microservices",
+					"Concurrency",
+				},
+				Databases: []string{
+					"PostgreSQL",
+				},
+			},
+			DomainExperience: []string{
+				"SaaS",
+				"Distributed Systems",
 			},
 		},
 		testPreferences(),
@@ -85,8 +110,8 @@ func TestScorerStrongBackendRole(t *testing.T) {
 		t.Fatal("expected skills score")
 	}
 
-	if result.CompanyScore != 10 {
-		t.Fatalf("company score = %.1f, want 10", result.CompanyScore)
+	if result.CompanyScore != 5 {
+		t.Fatalf("company score = %.1f, want 5", result.CompanyScore)
 	}
 
 	if result.LocationScore != 10 {

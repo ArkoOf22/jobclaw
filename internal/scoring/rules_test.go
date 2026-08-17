@@ -61,3 +61,49 @@ func TestExtractMinimumYears(t *testing.T) {
 		})
 	}
 }
+
+func TestScoreCandidateSkills(t *testing.T) {
+	match := CandidateMatch{
+		MatchedSkills:  0,
+		RequiredSkills: 10,
+	}
+
+	if got := scoreCandidateSkills(match); got != 0 {
+		t.Fatalf("score = %.1f, want 0.0", got)
+	}
+
+	match.MatchedSkills = 5
+
+	if got := scoreCandidateSkills(match); got != 5.0 {
+		t.Fatalf("score = %.1f, want 5.0", got)
+	}
+
+	match.MatchedSkills = 10
+
+	if got := scoreCandidateSkills(match); got != 10.0 {
+		t.Fatalf("score = %.1f, want 10.0", got)
+	}
+}
+
+func TestScoreCandidateDomain(t *testing.T) {
+	match := CandidateMatch{
+		MatchedDomains:  0,
+		RequiredDomains: 2,
+	}
+
+	if got := scoreCandidateDomain(match); got != 0 {
+		t.Fatalf("score = %.1f, want 0.0", got)
+	}
+
+	match.MatchedDomains = 1
+
+	if got := scoreCandidateDomain(match); got != 2.5 {
+		t.Fatalf("score = %.1f, want 5.0", got)
+	}
+
+	match.MatchedDomains = 2
+
+	if got := scoreCandidateDomain(match); got != 5 {
+		t.Fatalf("score = %.1f, want 5.0", got)
+	}
+}

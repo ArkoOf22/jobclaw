@@ -18,14 +18,16 @@ const (
 )
 
 type Result struct {
-	OverallScore      float64
-	SkillsScore       float64
-	RoleScore         float64
-	ExperienceScore   float64
-	DomainScore       float64
-	LocationScore     float64
-	CompanyScore      float64
-	CompensationScore float64
+	OverallScore         float64
+	SkillsScore          float64
+	CandidateSkillsScore float64
+	RoleScore            float64
+	ExperienceScore      float64
+	DomainScore          float64
+	CandidateDomainScore float64
+	LocationScore        float64
+	CompanyScore         float64
+	CompensationScore    float64
 
 	Recommendation Recommendation
 	Reasoning      string
@@ -34,6 +36,7 @@ type Result struct {
 type Scorer struct {
 	candidate   config.Candidate
 	preferences config.JobPreferences
+	matcher     *CandidateMatcher
 }
 
 func NewScorer(
@@ -43,10 +46,14 @@ func NewScorer(
 	return &Scorer{
 		candidate:   candidate,
 		preferences: preferences,
+		matcher:     NewCandidateMatcher(candidate),
 	}
 }
 
-func (s *Scorer) Score(j job.Job, c company.Company) Result {
+func (s *Scorer) Score(
+	j job.Job,
+	c company.Company,
+) Result {
 	text := strings.ToLower(
 		strings.Join([]string{
 			j.Title,
@@ -54,9 +61,18 @@ func (s *Scorer) Score(j job.Job, c company.Company) Result {
 		}, " "),
 	)
 
+	candidateMatch := s.matcher.Match(
+		text,
+		s.preferences,
+	)
+
 	skills := scoreSkills(
 		text,
 		s.preferences.TechnologyPreferences,
+	)
+
+	candidateSkills := scoreCandidateSkills(
+		candidateMatch,
 	)
 
 	role := scoreRole(
@@ -72,6 +88,10 @@ func (s *Scorer) Score(j job.Job, c company.Company) Result {
 	domain := scoreDomain(
 		text,
 		s.preferences.Domains,
+	)
+
+	candidateDomain := scoreCandidateDomain(
+		candidateMatch,
 	)
 
 	location := scoreLocation(
@@ -90,13 +110,21 @@ func (s *Scorer) Score(j job.Job, c company.Company) Result {
 		s.preferences.Compensation,
 	)
 
-	overall := skills +
+	// Component scores add up to a maximum of 110.
+	// Normalize the final score to a 0-100 scale so that
+	// JobQuality thresholds remain intuitive.
+	rawScore := skills +
+		candidateSkills +
 		role +
 		experience +
 		domain +
+		candidateDomain +
 		location +
 		companyScore +
 		compensation
+
+	const maxRawScore = 100.0
+	overall := (rawScore / maxRawScore) * 100.0
 
 	recommendation := RecommendationSkip
 
@@ -112,29 +140,40 @@ func (s *Scorer) Score(j job.Job, c company.Company) Result {
 		recommendation = RecommendationSkip
 	}
 
-	if containsAny(strings.ToLower(j.Title), s.preferences.Roles.Excluded) {
+	if containsAny(
+		strings.ToLower(j.Title),
+		s.preferences.Roles.Excluded,
+	) {
 		recommendation = RecommendationSkip
 	}
 
 	return Result{
-		OverallScore:      overall,
-		SkillsScore:       skills,
-		RoleScore:         role,
-		ExperienceScore:   experience,
-		DomainScore:       domain,
-		LocationScore:     location,
-		CompanyScore:      companyScore,
-		CompensationScore: compensation,
-		Recommendation:    recommendation,
+		OverallScore:         overall,
+		SkillsScore:          skills,
+		CandidateSkillsScore: candidateSkills,
+		RoleScore:            role,
+		ExperienceScore:      experience,
+		DomainScore:          domain,
+		CandidateDomainScore: candidateDomain,
+		LocationScore:        location,
+		CompanyScore:         companyScore,
+		CompensationScore:    compensation,
+		Recommendation:       recommendation,
 		Reasoning: fmt.Sprintf(
-			"skills=%.1f role=%.1f experience=%.1f domain=%.1f location=%.1f company=%.1f compensation=%.1f",
+			"skills=%.1f candidate_skills=%.1f role=%.1f experience=%.1f domain=%.1f candidate_domain=%.1f location=%.1f company=%.1f compensation=%.1f candidate_skills_match=%d/%d candidate_domain_match=%d/%d",
 			skills,
+			candidateSkills,
 			role,
 			experience,
 			domain,
+			candidateDomain,
 			location,
 			companyScore,
 			compensation,
+			candidateMatch.MatchedSkills,
+			candidateMatch.RequiredSkills,
+			candidateMatch.MatchedDomains,
+			candidateMatch.RequiredDomains,
 		),
 	}
 }
