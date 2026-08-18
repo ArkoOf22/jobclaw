@@ -92,13 +92,33 @@ func (s *Service) CreateForApprovedJob(
 		return existing, nil
 	}
 
-	if _, err := ensureApplicationWorkspace(jobID); err != nil {
+	root, err := ensureApplicationWorkspace(jobID)
+	if err != nil {
 		return nil, err
 	}
 
+	if s.resume == nil {
+		return nil, fmt.Errorf("resume generator is not configured")
+	}
+
+	resumePath := filepath.Join(
+		root,
+		"resume",
+		"tailored_resume.txt",
+	)
+
+	if err := s.resume.GenerateTailoredResume(
+		ctx,
+		jobID,
+		resumePath,
+	); err != nil {
+		return nil, fmt.Errorf("generate tailored resume: %w", err)
+	}
+
 	app := Application{
-		JobID:  jobID,
-		Status: StatusDraft,
+		JobID:              jobID,
+		Status:             StatusDraft,
+		TailoredResumePath: resumePath,
 	}
 
 	if err := s.applications.Create(ctx, app); err != nil {

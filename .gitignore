@@ -9,3 +9,6 @@ data/*.db-wal
 # Go tooling
 *.test
 coverage.out
+
+# Runtime JobClaw data
+data/

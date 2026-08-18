@@ -117,6 +117,45 @@ func (r *SQLiteRepository) GetByJobID(
 	return &app, nil
 }
 
+func (r *SQLiteRepository) UpdateTailoredResumePath(
+	ctx context.Context,
+	id int64,
+	path string,
+) error {
+	if id <= 0 {
+		return fmt.Errorf("application ID must be positive")
+	}
+
+	if path == "" {
+		return fmt.Errorf("tailored resume path is required")
+	}
+
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE applications
+		SET
+			tailored_resume_path = ?,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`,
+		path,
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("update tailored resume path: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check tailored resume path update: %w", err)
+	}
+
+	if rows == 0 {
+		return fmt.Errorf("application %d not found", id)
+	}
+
+	return nil
+}
+
 func (r *SQLiteRepository) UpdateStatus(
 	ctx context.Context,
 	id int64,
