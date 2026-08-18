@@ -120,7 +120,7 @@ func main() {
 				log.Fatal("job ID must be a positive integer")
 			}
 
-			runApplication(jobID, db)
+			runApplication(jobID, cfg, db)
 			return
 
 		case "resume":
@@ -327,13 +327,54 @@ func runResume(
 	fmt.Printf("Output:     %s\n", outputPath)
 }
 
-func runApplication(jobID int64, db *database.DB) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+func runApplication(jobID int64, cfg *config.Config, db *database.DB) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	jobRepo := job.NewSQLiteRepository(db)
 	applicationRepo := application.NewSQLiteRepository(db)
-	resumeGenerator := application.NewMockResumeGenerator()
+
+	resumeConfig := cfg.Resume.Resume
+
+	apiKey := os.Getenv(resumeConfig.LLM.APIKeyEnv)
+	if apiKey == "" {
+		log.Fatalf(
+			"resume LLM API key environment variable %q is not set",
+			resumeConfig.LLM.APIKeyEnv,
+		)
+	}
+
+	resumeSource := application.NewResumeSource(
+		application.ResumeSourceConfig{
+			MasterPath:            resumeConfig.MasterPath,
+			OutputFormat:          resumeConfig.OutputFormat,
+			PreserveFacts:         resumeConfig.Generation.PreserveFacts,
+			AllowRewording:        resumeConfig.Generation.AllowRewording,
+			AllowReordering:       resumeConfig.Generation.AllowReordering,
+			AllowSkillSelection:   resumeConfig.Generation.AllowSkillSelection,
+			AllowMetricChanges:    resumeConfig.Generation.AllowMetricChanges,
+			AllowExperienceInvent: resumeConfig.Generation.AllowExperienceInvention,
+		},
+	)
+
+	promptBuilder := application.NewResumePromptBuilder(resumeSource)
+
+	llmClient, err := openrouter.NewClient(
+		openrouter.Config{
+			APIKey:  apiKey,
+			Model:   resumeConfig.LLM.Model,
+			BaseURL: resumeConfig.LLM.BaseURL,
+		},
+	)
+	if err != nil {
+		log.Fatalf("initialize resume LLM: %v", err)
+	}
+
+	resumeGenerator := application.NewLLMResumeGenerator(
+		jobRepo,
+		promptBuilder,
+		llmClient,
+	)
 
 	service := application.NewService(
 		jobRepo,

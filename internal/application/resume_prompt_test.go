@@ -53,9 +53,9 @@ Twid — Software Development Engineer
 
 	checks := []string{
 		"JobClaw's resume tailoring engine",
-		"master resume is the factual source of truth",
+		"MASTER RESUME is the only factual source of truth",
 		"Do not invent experience.",
-		"Do not invent metrics.",
+		"Never invent, estimate, infer, calculate, derive, round, or extrapolate a metric.",
 		"Setu",
 		"SDE II",
 		"Bengaluru",
