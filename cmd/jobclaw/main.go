@@ -244,10 +244,12 @@ func runApplication(jobID int64, db *database.DB) {
 
 	jobRepo := job.NewSQLiteRepository(db)
 	applicationRepo := application.NewSQLiteRepository(db)
+	resumeGenerator := application.NewMockResumeGenerator()
 
 	service := application.NewService(
 		jobRepo,
 		applicationRepo,
+		resumeGenerator,
 	)
 
 	app, err := service.CreateForApprovedJob(ctx, jobID)

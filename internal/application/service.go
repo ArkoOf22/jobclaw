@@ -12,15 +12,18 @@ import (
 type Service struct {
 	jobs         *job.SQLiteRepository
 	applications *SQLiteRepository
+	resume       ResumeGenerator
 }
 
 func NewService(
 	jobs *job.SQLiteRepository,
 	applications *SQLiteRepository,
+	resume ResumeGenerator,
 ) *Service {
 	return &Service{
 		jobs:         jobs,
 		applications: applications,
+		resume:       resume,
 	}
 }
 

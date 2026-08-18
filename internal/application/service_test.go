@@ -28,8 +28,9 @@ func setupApplicationServiceTest(t *testing.T) (
 
 	jobRepo := job.NewSQLiteRepository(db)
 	appRepo := NewSQLiteRepository(db)
+	resume := NewMockResumeGenerator()
 
-	return db, jobRepo, appRepo, NewService(jobRepo, appRepo)
+	return db, jobRepo, appRepo, NewService(jobRepo, appRepo, resume)
 }
 
 func createTestJob(
