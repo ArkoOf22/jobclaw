@@ -71,30 +71,54 @@ func (g *LLMResumeGenerator) GenerateTailoredResume(
 		return fmt.Errorf("build resume prompt: %w", err)
 	}
 
-	generated, err := g.llm.Generate(ctx, prompt)
-	if err != nil {
-		return fmt.Errorf("generate tailored resume: %w", err)
+	const maxAttempts = 3
+
+	currentPrompt := prompt
+
+	var generated string
+	var lastValidationErr error
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		generated, err = g.llm.Generate(ctx, currentPrompt)
+		if err != nil {
+			return fmt.Errorf("generate tailored resume: %w", err)
+		}
+
+		generated = strings.TrimSpace(generated)
+
+		if generated == "" {
+			lastValidationErr = fmt.Errorf("generated resume is empty")
+		} else {
+			lastValidationErr = validateGeneratedResumeWithFacts(
+				generated,
+				g.builder.source,
+			)
+		}
+
+		if lastValidationErr == nil {
+			break
+		}
+
+		if attempt == maxAttempts {
+			break
+		}
+
+		currentPrompt = buildResumeRetryPrompt(
+			prompt,
+			lastValidationErr,
+		)
 	}
 
-	generated = strings.TrimSpace(generated)
-
-	if generated == "" {
-		return fmt.Errorf("generated resume is empty")
-	}
-
-	if err := validateGeneratedResume(generated); err != nil {
-		return fmt.Errorf("validate generated resume: %w", err)
-	}
-
-	masterResume, err := g.builder.source.Load()
-	if err != nil {
-		return fmt.Errorf("load master resume for fact validation: %w", err)
-	}
-
-	factGuard := NewResumeFactGuard(masterResume)
-
-	if err := factGuard.Validate(generated); err != nil {
-		return fmt.Errorf("resume fact validation failed: %w", err)
+	if lastValidationErr != nil {
+		return fmt.Errorf(
+			"resume fact validation failed after %d attempts: %w",
+			maxAttempts,
+			lastValidationErr,
+		)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
@@ -110,6 +134,54 @@ func (g *LLMResumeGenerator) GenerateTailoredResume(
 	}
 
 	return nil
+}
+
+func validateGeneratedResumeWithFacts(
+	generated string,
+	source *ResumeSource,
+) error {
+	if source == nil {
+		return fmt.Errorf("resume source is required")
+	}
+
+	masterResume, err := source.Load()
+	if err != nil {
+		return fmt.Errorf("load master resume: %w", err)
+	}
+
+	guard := NewResumeFactGuard(masterResume)
+
+	if err := guard.Validate(generated); err != nil {
+		return err
+	}
+
+	return validateGeneratedResume(generated)
+}
+
+func buildResumeRetryPrompt(
+	originalPrompt string,
+	validationErr error,
+) string {
+	return fmt.Sprintf(`%s
+
+IMPORTANT: The previous generated resume failed factual validation.
+
+Validation failure:
+%s
+
+Regenerate the resume from the master resume.
+
+Rules for this retry:
+- Remove the unsupported claim completely.
+- Do NOT replace an unsupported metric with another number.
+- Do NOT invent or estimate a metric.
+- Do NOT invent experience, companies, technologies, dates, or achievements.
+- Use only facts supported by the master resume.
+- Return only the resume.
+`,
+		originalPrompt,
+		validationErr,
+	)
 }
 
 func validateGeneratedResume(resume string) error {

@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -311,5 +312,234 @@ Ramaiah Institute of Technology`
 		t.Fatal("resume artifact should not exist after fact validation failure")
 	} else if !os.IsNotExist(err) {
 		t.Fatalf("unexpected output path error: %v", err)
+	}
+}
+
+type sequenceResumeLLM struct {
+	responses []string
+	calls     int
+	prompts   []string
+}
+
+func (m *sequenceResumeLLM) Generate(
+	ctx context.Context,
+	prompt string,
+) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	m.calls++
+	m.prompts = append(m.prompts, prompt)
+
+	if len(m.responses) == 0 {
+		return "", fmt.Errorf("no response configured")
+	}
+
+	index := m.calls - 1
+	if index >= len(m.responses) {
+		index = len(m.responses) - 1
+	}
+
+	return m.responses[index], nil
+}
+
+func TestLLMResumeGeneratorRetriesAfterFactValidationFailure(t *testing.T) {
+	db, jobRepo, _ := setupLLMResumeGeneratorTest(t)
+	defer db.Close()
+
+	resumeDir := t.TempDir()
+	masterPath := filepath.Join(resumeDir, "master_resume.txt")
+	outputPath := filepath.Join(resumeDir, "tailored_resume.txt")
+
+	master := `Arkodeep Koley
+
+Software Development Engineer
+
+EXPERIENCE
+
+Twid — Software Development Engineer
+
+- Built Go microservices.
+- Reduced production log volume by 92%.
+- Owned integrations across 18 external issuers.
+`
+
+	if err := os.WriteFile(masterPath, []byte(master), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	source := NewResumeSource(ResumeSourceConfig{
+		MasterPath: masterPath,
+	})
+
+	builder := NewResumePromptBuilder(source)
+
+	invalid := `Arkodeep Koley
+
+Software Development Engineer
+
+EXPERIENCE
+
+Twid — Software Development Engineer
+
+- Reduced production log volume by 97%.
+`
+
+	valid := `Arkodeep Koley
+
+Software Development Engineer
+
+EXPERIENCE
+
+Twid — Software Development Engineer
+
+- Built Go microservices.
+- Reduced production log volume by 92%.
+- Owned integrations across 18 external issuers.
+`
+
+	llm := &sequenceResumeLLM{
+		responses: []string{invalid, valid},
+	}
+
+	generator := NewLLMResumeGenerator(
+		jobRepo,
+		builder,
+		llm,
+	)
+
+	if err := generator.GenerateTailoredResume(
+		context.Background(),
+		1,
+		outputPath,
+	); err != nil {
+		t.Fatalf("expected retry to succeed: %v", err)
+	}
+
+	if llm.calls != 2 {
+		t.Fatalf("LLM calls = %d, want 2", llm.calls)
+	}
+
+	if len(llm.prompts) != 2 {
+		t.Fatalf("prompts = %d, want 2", len(llm.prompts))
+	}
+
+	if !strings.Contains(
+		llm.prompts[1],
+		"unsupported metric",
+	) {
+		t.Fatal("retry prompt does not contain validation feedback")
+	}
+
+	generated, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(generated) != strings.TrimSpace(valid) {
+		t.Fatalf(
+			"generated resume = %q, want valid response",
+			string(generated),
+		)
+	}
+}
+
+func TestLLMResumeGeneratorStopsAfterThreeFailedAttempts(t *testing.T) {
+	db, jobRepo, _ := setupLLMResumeGeneratorTest(t)
+	defer db.Close()
+
+	resumeDir := t.TempDir()
+	masterPath := filepath.Join(resumeDir, "master_resume.txt")
+	outputPath := filepath.Join(resumeDir, "tailored_resume.txt")
+
+	master := `Arkodeep Koley
+
+Software Development Engineer
+
+EXPERIENCE
+
+Twid — Software Development Engineer
+
+- Built Go microservices.
+- Reduced production log volume by 92%.
+`
+
+	if err := os.WriteFile(masterPath, []byte(master), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	source := NewResumeSource(ResumeSourceConfig{
+		MasterPath: masterPath,
+	})
+
+	builder := NewResumePromptBuilder(source)
+
+	invalid := `Arkodeep Koley
+
+Software Development Engineer
+
+EXPERIENCE
+
+Twid — Software Development Engineer
+
+- Reduced production log volume by 97%.
+`
+
+	llm := &sequenceResumeLLM{
+		responses: []string{invalid},
+	}
+
+	generator := NewLLMResumeGenerator(
+		jobRepo,
+		builder,
+		llm,
+	)
+
+	err := generator.GenerateTailoredResume(
+		context.Background(),
+		1,
+		outputPath,
+	)
+
+	if err == nil {
+		t.Fatal("expected validation failure")
+	}
+
+	if !strings.Contains(
+		err.Error(),
+		"after 3 attempts",
+	) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if llm.calls != 3 {
+		t.Fatalf("LLM calls = %d, want 3", llm.calls)
+	}
+
+	if _, statErr := os.Stat(outputPath); !os.IsNotExist(statErr) {
+		t.Fatal("invalid resume should not be written")
+	}
+}
+
+func TestLLMResumeGeneratorRetryPromptContainsValidationFeedback(t *testing.T) {
+	prompt := buildResumeRetryPrompt(
+		"ORIGINAL PROMPT",
+		fmt.Errorf(`generated resume contains unsupported metric "78%%"`),
+	)
+
+	if !strings.Contains(prompt, "ORIGINAL PROMPT") {
+		t.Fatal("retry prompt lost original prompt")
+	}
+
+	if !strings.Contains(prompt, `unsupported metric "78%`) {
+		t.Fatal("retry prompt lost validation error")
+	}
+
+	if !strings.Contains(
+		prompt,
+		"Do NOT replace an unsupported metric with another number",
+	) {
+		t.Fatal("retry prompt missing metric safety rule")
 	}
 }
