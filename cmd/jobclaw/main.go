@@ -16,6 +16,7 @@ import (
 	"jobclaw/internal/discovery"
 	"jobclaw/internal/discovery/jobspy"
 	"jobclaw/internal/job"
+	"jobclaw/internal/llm/openrouter"
 	"jobclaw/internal/scoring"
 )
 
@@ -120,6 +121,19 @@ func main() {
 			}
 
 			runApplication(jobID, db)
+			return
+
+		case "resume":
+			if len(os.Args) != 3 {
+				log.Fatal("usage: jobclaw resume <id>")
+			}
+
+			jobID, err := strconv.ParseInt(os.Args[2], 10, 64)
+			if err != nil || jobID <= 0 {
+				log.Fatal("job ID must be a positive integer")
+			}
+
+			runResume(jobID, cfg, db)
 			return
 
 		case "job":
@@ -236,6 +250,81 @@ func runJobsList(db *database.DB) {
 			j.URL,
 		)
 	}
+}
+
+func runResume(
+	jobID int64,
+	cfg *config.Config,
+	db *database.DB,
+) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	jobRepo := job.NewSQLiteRepository(db)
+
+	resumeConfig := cfg.Resume.Resume
+
+	apiKey := os.Getenv(resumeConfig.LLM.APIKeyEnv)
+	if apiKey == "" {
+		log.Fatalf(
+			"resume LLM API key environment variable %q is not set",
+			resumeConfig.LLM.APIKeyEnv,
+		)
+	}
+
+	resumeSource := application.NewResumeSource(
+		application.ResumeSourceConfig{
+			MasterPath:            resumeConfig.MasterPath,
+			OutputFormat:          resumeConfig.OutputFormat,
+			PreserveFacts:         resumeConfig.Generation.PreserveFacts,
+			AllowRewording:        resumeConfig.Generation.AllowRewording,
+			AllowReordering:       resumeConfig.Generation.AllowReordering,
+			AllowSkillSelection:   resumeConfig.Generation.AllowSkillSelection,
+			AllowMetricChanges:    resumeConfig.Generation.AllowMetricChanges,
+			AllowExperienceInvent: resumeConfig.Generation.AllowExperienceInvention,
+		},
+	)
+
+	promptBuilder := application.NewResumePromptBuilder(resumeSource)
+
+	llmClient, err := openrouter.NewClient(
+		openrouter.Config{
+			APIKey:  apiKey,
+			Model:   resumeConfig.LLM.Model,
+			BaseURL: resumeConfig.LLM.BaseURL,
+		},
+	)
+	if err != nil {
+		log.Fatalf("initialize resume LLM: %v", err)
+	}
+
+	generator := application.NewLLMResumeGenerator(
+		jobRepo,
+		promptBuilder,
+		llmClient,
+	)
+
+	outputPath := filepath.Join(
+		"data",
+		"applications",
+		strconv.FormatInt(jobID, 10),
+		"resume",
+		"tailored_resume.txt",
+	)
+
+	if err := generator.GenerateTailoredResume(
+		ctx,
+		jobID,
+		outputPath,
+	); err != nil {
+		log.Fatalf("generate tailored resume: %v", err)
+	}
+
+	fmt.Println("JobClaw Resume")
+	fmt.Println("────────────────────────────")
+	fmt.Printf("Job ID:     %d\n", jobID)
+	fmt.Printf("Model:      %s\n", resumeConfig.LLM.Model)
+	fmt.Printf("Output:     %s\n", outputPath)
 }
 
 func runApplication(jobID int64, db *database.DB) {
