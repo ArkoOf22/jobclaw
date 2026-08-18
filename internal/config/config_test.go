@@ -29,4 +29,33 @@ func TestLoad(t *testing.T) {
 	if cfg.Preferences.JobPreferences.ApplicationPolicy.AllowAutonomousSubmission {
 		t.Fatal("autonomous submission must be disabled")
 	}
+
+	if cfg.Resume.Resume.MasterPath != "data/resume/master_resume.txt" {
+		t.Fatalf(
+			"unexpected resume master path: %q",
+			cfg.Resume.Resume.MasterPath,
+		)
+	}
+
+	if cfg.Resume.Resume.LLM.Provider != "openrouter" {
+		t.Fatalf(
+			"unexpected resume LLM provider: %q",
+			cfg.Resume.Resume.LLM.Provider,
+		)
+	}
+
+	if cfg.Resume.Resume.LLM.APIKeyEnv != "OPENROUTER_API_KEY" {
+		t.Fatalf(
+			"unexpected API key env: %q",
+			cfg.Resume.Resume.LLM.APIKeyEnv,
+		)
+	}
+
+	if cfg.Resume.Resume.Generation.AllowMetricChanges {
+		t.Fatal("resume metric changes must remain disabled")
+	}
+
+	if cfg.Resume.Resume.Generation.AllowExperienceInvention {
+		t.Fatal("resume experience invention must remain disabled")
+	}
 }

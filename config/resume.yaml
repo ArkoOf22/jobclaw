@@ -1,0 +1,17 @@
+resume:
+  master_path: "data/resume/master_resume.txt"
+  output_format: "txt"
+
+  generation:
+    preserve_facts: true
+    allow_rewording: true
+    allow_reordering: true
+    allow_skill_selection: true
+    allow_metric_changes: false
+    allow_experience_invention: false
+
+  llm:
+    provider: "openrouter"
+    model: "openrouter/auto"
+    base_url: "https://openrouter.ai/api/v1"
+    api_key_env: "OPENROUTER_API_KEY"

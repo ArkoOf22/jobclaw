@@ -52,5 +52,35 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("autonomous submission must remain disabled during foundation")
 	}
 
+	resume := c.Resume.Resume
+
+	if strings.TrimSpace(resume.MasterPath) == "" {
+		return fmt.Errorf("resume master path is required")
+	}
+
+	if strings.TrimSpace(resume.OutputFormat) == "" {
+		return fmt.Errorf("resume output format is required")
+	}
+
+	if strings.TrimSpace(resume.LLM.Provider) == "" {
+		return fmt.Errorf("resume LLM provider is required")
+	}
+
+	if strings.TrimSpace(resume.LLM.Model) == "" {
+		return fmt.Errorf("resume LLM model is required")
+	}
+
+	if strings.TrimSpace(resume.LLM.APIKeyEnv) == "" {
+		return fmt.Errorf("resume LLM API key environment variable is required")
+	}
+
+	if resume.Generation.AllowMetricChanges {
+		return fmt.Errorf("resume metric changes must remain disabled")
+	}
+
+	if resume.Generation.AllowExperienceInvention {
+		return fmt.Errorf("resume experience invention must remain disabled")
+	}
+
 	return nil
 }
