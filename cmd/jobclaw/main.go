@@ -333,6 +333,7 @@ func runApplication(jobID int64, cfg *config.Config, db *database.DB) {
 
 	jobRepo := job.NewSQLiteRepository(db)
 	applicationRepo := application.NewSQLiteRepository(db)
+	eventRepo := application.NewSQLiteEventRepository(db)
 
 	resumeConfig := cfg.Resume.Resume
 
@@ -379,6 +380,7 @@ func runApplication(jobID int64, cfg *config.Config, db *database.DB) {
 	service := application.NewService(
 		jobRepo,
 		applicationRepo,
+		eventRepo,
 		resumeGenerator,
 	)
 
