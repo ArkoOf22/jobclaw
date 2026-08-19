@@ -6,20 +6,26 @@ import (
 )
 
 type QuestionnaireService struct {
-	questions QuestionRepository
-	resolver  *AnswerResolver
-	events    EventRepository
+	questions         QuestionRepository
+	resolver          *AnswerResolver
+	questionAnswerLLM QuestionAnswerLLM
+	candidateContext  string
+	events            EventRepository
 }
 
 func NewQuestionnaireService(
 	questions QuestionRepository,
 	resolver *AnswerResolver,
+	questionAnswerLLM QuestionAnswerLLM,
+	candidateContext string,
 	events EventRepository,
 ) *QuestionnaireService {
 	return &QuestionnaireService{
-		questions: questions,
-		resolver:  resolver,
-		events:    events,
+		questions:         questions,
+		resolver:          resolver,
+		questionAnswerLLM: questionAnswerLLM,
+		candidateContext:  candidateContext,
+		events:            events,
 	}
 }
 
@@ -81,6 +87,37 @@ func (s *QuestionnaireService) ProcessApplication(
 				question.ID,
 				err,
 			)
+		}
+
+		// Candidate answer bank is authoritative. Only fall back
+		// to the LLM when the verified answer bank cannot answer.
+		if resolution.Status == ResolutionNeedsReview &&
+			s.questionAnswerLLM != nil &&
+			s.candidateContext != "" {
+
+			answer, llmErr := s.questionAnswerLLM.GenerateAnswer(
+				ctx,
+				question,
+				s.candidateContext,
+			)
+
+			if llmErr != nil {
+				// LLM failures are isolated to this question.
+				// The questionnaire must continue processing the
+				// remaining questions.
+				resolution.Reason = fmt.Sprintf(
+					"LLM answer generation failed: %v",
+					llmErr,
+				)
+			} else if answer != "NEEDS_REVIEW" {
+				resolution.Answer = answer
+				resolution.Source = AnswerSourceLLM
+				resolution.Status = ResolutionAnswered
+				resolution.Reason = "answered from candidate context using LLM"
+			} else {
+				resolution.Reason =
+					"LLM could not safely answer from candidate context"
+			}
 		}
 
 		if resolution.Status == ResolutionAnswered {

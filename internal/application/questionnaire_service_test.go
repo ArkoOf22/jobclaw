@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"fmt"
 	"testing"
 )
 
@@ -127,6 +128,8 @@ func TestQuestionnaireServiceResolvesVerifiedAnswers(
 	service := NewQuestionnaireService(
 		questions,
 		resolver,
+		nil,
+		"",
 		events,
 	)
 
@@ -220,6 +223,8 @@ func TestQuestionnaireServiceMarksUnknownQuestionsForReview(
 	service := NewQuestionnaireService(
 		questions,
 		NewAnswerResolver(answers),
+		nil,
+		"",
 		events,
 	)
 
@@ -312,6 +317,8 @@ func TestQuestionnaireServiceDoesNotOverwriteApprovedQuestion(
 	service := NewQuestionnaireService(
 		questions,
 		NewAnswerResolver(answers),
+		nil,
+		"",
 		&fakeEventRepository{},
 	)
 
@@ -339,6 +346,558 @@ func TestQuestionnaireServiceDoesNotOverwriteApprovedQuestion(
 		t.Fatalf(
 			"updates = %d, want 0",
 			len(questions.updates),
+		)
+	}
+}
+
+type trackingQuestionAnswerLLM struct {
+	answer    string
+	err       error
+	callCount int
+}
+
+func (f *trackingQuestionAnswerLLM) GenerateAnswer(
+	ctx context.Context,
+	question ApplicationQuestion,
+	candidateContext string,
+) (string, error) {
+	f.callCount++
+
+	if f.err != nil {
+		return "", f.err
+	}
+
+	return f.answer, nil
+}
+
+func TestQuestionnaireServiceFallsBackToLLM(t *testing.T) {
+	questions := &fakeQuestionRepository{
+		questions: []ApplicationQuestion{
+			{
+				ID:            40,
+				ApplicationID: 40,
+				Question:      "What is your preferred programming language?",
+				Status:        QuestionNeedsReview,
+			},
+		},
+	}
+
+	answers := &fakeAnswerRepository{
+		answers: map[string]*CandidateAnswer{},
+	}
+
+	events := &fakeEventRepository{}
+
+	llm := &trackingQuestionAnswerLLM{
+		answer: "Go",
+	}
+
+	service := NewQuestionnaireService(
+		questions,
+		NewAnswerResolver(answers),
+		llm,
+		"Candidate prefers Go for backend development.",
+		events,
+	)
+
+	results, err := service.ProcessApplication(
+		context.Background(),
+		40,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("results = %d, want 1", len(results))
+	}
+
+	result := results[0]
+
+	if result.Status != ResolutionAnswered {
+		t.Fatalf(
+			"status = %q, want %q",
+			result.Status,
+			ResolutionAnswered,
+		)
+	}
+
+	if result.Answer != "Go" {
+		t.Fatalf(
+			"answer = %q, want %q",
+			result.Answer,
+			"Go",
+		)
+	}
+
+	if result.Source != AnswerSourceLLM {
+		t.Fatalf(
+			"source = %q, want %q",
+			result.Source,
+			AnswerSourceLLM,
+		)
+	}
+
+	if llm.callCount != 1 {
+		t.Fatalf(
+			"LLM calls = %d, want 1",
+			llm.callCount,
+		)
+	}
+
+	if len(questions.updates) != 1 {
+		t.Fatalf(
+			"updates = %d, want 1",
+			len(questions.updates),
+		)
+	}
+
+	if questions.updates[0].Answer != "Go" {
+		t.Fatalf(
+			"persisted answer = %q, want %q",
+			questions.updates[0].Answer,
+			"Go",
+		)
+	}
+
+	if questions.updates[0].Source != AnswerSourceLLM {
+		t.Fatalf(
+			"persisted source = %q, want %q",
+			questions.updates[0].Source,
+			AnswerSourceLLM,
+		)
+	}
+
+	if len(events.events) != 1 {
+		t.Fatalf(
+			"events = %d, want 1",
+			len(events.events),
+		)
+	}
+
+	if events.events[0].Type != EventQuestionAnswered {
+		t.Fatalf(
+			"event = %q, want %q",
+			events.events[0].Type,
+			EventQuestionAnswered,
+		)
+	}
+}
+
+func TestQuestionnaireServiceLLMNeedsReview(t *testing.T) {
+	questions := &fakeQuestionRepository{
+		questions: []ApplicationQuestion{
+			{
+				ID:            41,
+				ApplicationID: 41,
+				Question:      "What is your preferred programming language?",
+				Status:        QuestionNeedsReview,
+			},
+		},
+	}
+
+	answers := &fakeAnswerRepository{
+		answers: map[string]*CandidateAnswer{},
+	}
+
+	events := &fakeEventRepository{}
+
+	llm := &trackingQuestionAnswerLLM{
+		answer: "NEEDS_REVIEW",
+	}
+
+	service := NewQuestionnaireService(
+		questions,
+		NewAnswerResolver(answers),
+		llm,
+		"Candidate profile contains no programming preference.",
+		events,
+	)
+
+	results, err := service.ProcessApplication(
+		context.Background(),
+		41,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if results[0].Status != ResolutionNeedsReview {
+		t.Fatalf(
+			"status = %q, want %q",
+			results[0].Status,
+			ResolutionNeedsReview,
+		)
+	}
+
+	if results[0].Answer != "" {
+		t.Fatalf(
+			"answer = %q, want empty",
+			results[0].Answer,
+		)
+	}
+
+	if len(questions.updates) != 1 {
+		t.Fatalf(
+			"updates = %d, want 1",
+			len(questions.updates),
+		)
+	}
+
+	if questions.updates[0].Status != QuestionNeedsReview {
+		t.Fatalf(
+			"status = %q, want %q",
+			questions.updates[0].Status,
+			QuestionNeedsReview,
+		)
+	}
+
+	if len(events.events) != 1 {
+		t.Fatalf(
+			"events = %d, want 1",
+			len(events.events),
+		)
+	}
+
+	if events.events[0].Type != EventQuestionNeedsReview {
+		t.Fatalf(
+			"event = %q, want %q",
+			events.events[0].Type,
+			EventQuestionNeedsReview,
+		)
+	}
+}
+
+func TestQuestionnaireServiceCandidateAnswerWinsOverLLM(t *testing.T) {
+	questions := &fakeQuestionRepository{
+		questions: []ApplicationQuestion{
+			{
+				ID:            42,
+				ApplicationID: 42,
+				Question:      "What is your notice period?",
+				Status:        QuestionNeedsReview,
+			},
+		},
+	}
+
+	answers := &fakeAnswerRepository{
+		answers: map[string]*CandidateAnswer{
+			"notice_period": {
+				ID:        10,
+				FieldKey:  "notice_period",
+				Answer:    "60 days",
+				Verified:  true,
+				ValueType: AnswerValueText,
+			},
+		},
+	}
+
+	llm := &trackingQuestionAnswerLLM{
+		answer: "30 days",
+	}
+
+	questionsEvents := &fakeEventRepository{}
+
+	service := NewQuestionnaireService(
+		questions,
+		NewAnswerResolver(answers),
+		llm,
+		"Candidate has a 30 day notice period.",
+		questionsEvents,
+	)
+
+	results, err := service.ProcessApplication(
+		context.Background(),
+		42,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if results[0].Answer != "60 days" {
+		t.Fatalf(
+			"answer = %q, want %q",
+			results[0].Answer,
+			"60 days",
+		)
+	}
+
+	if results[0].Source != AnswerSourceCandidate {
+		t.Fatalf(
+			"source = %q, want %q",
+			results[0].Source,
+			AnswerSourceCandidate,
+		)
+	}
+
+	if llm.callCount != 0 {
+		t.Fatalf(
+			"LLM calls = %d, want 0",
+			llm.callCount,
+		)
+	}
+}
+
+func TestQuestionnaireServiceLLMUnavailableLeavesQuestionForReview(
+	t *testing.T,
+) {
+	questions := &fakeQuestionRepository{
+		questions: []ApplicationQuestion{
+			{
+				ID:            43,
+				ApplicationID: 43,
+				Question:      "What is your preferred programming language?",
+				Status:        QuestionNeedsReview,
+			},
+		},
+	}
+
+	answers := &fakeAnswerRepository{
+		answers: map[string]*CandidateAnswer{},
+	}
+
+	events := &fakeEventRepository{}
+
+	service := NewQuestionnaireService(
+		questions,
+		NewAnswerResolver(answers),
+		nil,
+		"",
+		events,
+	)
+
+	results, err := service.ProcessApplication(
+		context.Background(),
+		43,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if results[0].Status != ResolutionNeedsReview {
+		t.Fatalf(
+			"status = %q, want %q",
+			results[0].Status,
+			ResolutionNeedsReview,
+		)
+	}
+
+	if len(questions.updates) != 1 {
+		t.Fatalf(
+			"updates = %d, want 1",
+			len(questions.updates),
+		)
+	}
+}
+
+func TestQuestionnaireServiceContinuesAfterLLMFailure(t *testing.T) {
+	questions := &fakeQuestionRepository{
+		questions: []ApplicationQuestion{
+			{
+				ID:            50,
+				ApplicationID: 50,
+				Question:      "What is your preferred programming language?",
+				Status:        QuestionNeedsReview,
+			},
+			{
+				ID:            51,
+				ApplicationID: 50,
+				Question:      "What is your notice period?",
+				Status:        QuestionNeedsReview,
+			},
+		},
+	}
+
+	answers := &fakeAnswerRepository{
+		answers: map[string]*CandidateAnswer{},
+	}
+
+	llm := &trackingQuestionAnswerLLM{
+		err: fmt.Errorf("OpenRouter timeout"),
+	}
+
+	events := &fakeEventRepository{}
+
+	service := NewQuestionnaireService(
+		questions,
+		NewAnswerResolver(answers),
+		llm,
+		"Candidate context",
+		events,
+	)
+
+	results, err := service.ProcessApplication(
+		context.Background(),
+		50,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("results = %d, want 2", len(results))
+	}
+
+	for i, result := range results {
+		if result.Status != ResolutionNeedsReview {
+			t.Fatalf(
+				"result[%d] status = %q, want %q",
+				i,
+				result.Status,
+				ResolutionNeedsReview,
+			)
+		}
+
+		if result.Answer != "" {
+			t.Fatalf(
+				"result[%d] answer = %q, want empty",
+				i,
+				result.Answer,
+			)
+		}
+	}
+
+	if len(questions.updates) != 2 {
+		t.Fatalf(
+			"updates = %d, want 2",
+			len(questions.updates),
+		)
+	}
+
+	for i, update := range questions.updates {
+		if update.Status != QuestionNeedsReview {
+			t.Fatalf(
+				"update[%d] status = %q, want %q",
+				i,
+				update.Status,
+				QuestionNeedsReview,
+			)
+		}
+	}
+
+	if len(events.events) != 2 {
+		t.Fatalf(
+			"events = %d, want 2",
+			len(events.events),
+		)
+	}
+
+	for i, event := range events.events {
+		if event.Type != EventQuestionNeedsReview {
+			t.Fatalf(
+				"event[%d] type = %q, want %q",
+				i,
+				event.Type,
+				EventQuestionNeedsReview,
+			)
+		}
+
+		if event.Metadata == "" {
+			t.Fatalf(
+				"event[%d] metadata should contain failure reason",
+				i,
+			)
+		}
+	}
+
+	if llm.callCount != 2 {
+		t.Fatalf(
+			"LLM calls = %d, want 2",
+			llm.callCount,
+		)
+	}
+}
+
+func TestQuestionnaireServiceLLMFailureDoesNotAffectCandidateAnswers(
+	t *testing.T,
+) {
+	questions := &fakeQuestionRepository{
+		questions: []ApplicationQuestion{
+			{
+				ID:            52,
+				ApplicationID: 52,
+				Question:      "What is your notice period?",
+				Status:        QuestionNeedsReview,
+			},
+			{
+				ID:            53,
+				ApplicationID: 52,
+				Question:      "What is your preferred programming language?",
+				Status:        QuestionNeedsReview,
+			},
+		},
+	}
+
+	answers := &fakeAnswerRepository{
+		answers: map[string]*CandidateAnswer{
+			"notice_period": {
+				ID:        20,
+				FieldKey:  "notice_period",
+				Answer:    "60 days",
+				Verified:  true,
+				ValueType: AnswerValueText,
+			},
+		},
+	}
+
+	llm := &trackingQuestionAnswerLLM{
+		err: fmt.Errorf("OpenRouter unavailable"),
+	}
+
+	events := &fakeEventRepository{}
+
+	service := NewQuestionnaireService(
+		questions,
+		NewAnswerResolver(answers),
+		llm,
+		"Candidate context",
+		events,
+	)
+
+	results, err := service.ProcessApplication(
+		context.Background(),
+		52,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if results[0].Status != ResolutionAnswered {
+		t.Fatalf(
+			"candidate answer status = %q, want %q",
+			results[0].Status,
+			ResolutionAnswered,
+		)
+	}
+
+	if results[0].Answer != "60 days" {
+		t.Fatalf(
+			"candidate answer = %q, want %q",
+			results[0].Answer,
+			"60 days",
+		)
+	}
+
+	if results[0].Source != AnswerSourceCandidate {
+		t.Fatalf(
+			"candidate source = %q, want %q",
+			results[0].Source,
+			AnswerSourceCandidate,
+		)
+	}
+
+	if results[1].Status != ResolutionNeedsReview {
+		t.Fatalf(
+			"LLM question status = %q, want %q",
+			results[1].Status,
+			ResolutionNeedsReview,
+		)
+	}
+
+	if llm.callCount != 1 {
+		t.Fatalf(
+			"LLM calls = %d, want 1",
+			llm.callCount,
 		)
 	}
 }
