@@ -22,6 +22,12 @@ func (f *fakeQuestionRepository) Create(
 	ctx context.Context,
 	question ApplicationQuestion,
 ) error {
+	if question.ID == 0 {
+		question.ID = int64(len(f.questions) + 1)
+	}
+
+	f.questions = append(f.questions, question)
+
 	return nil
 }
 
