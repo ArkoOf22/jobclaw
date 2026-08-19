@@ -175,7 +175,7 @@ func main() {
 				log.Fatal("application ID must be a positive integer")
 			}
 
-			runQuestionnaire(applicationID, db)
+			runQuestionnaire(applicationID, cfg, db)
 			return
 
 		case "resume":
@@ -562,12 +562,20 @@ func runAnswerList(db *database.DB) {
 	fmt.Printf("Total answers: %d\n", len(answers))
 }
 
-func runQuestionnaire(applicationID int64, db *database.DB) {
+func runQuestionnaire(
+	applicationID int64,
+	cfg *config.Config,
+	db *database.DB,
+) {
 	ctx, cancel := context.WithTimeout(
 		context.Background(),
-		30*time.Second,
+		2*time.Minute,
 	)
 	defer cancel()
+
+	if cfg == nil {
+		log.Fatal("configuration is required")
+	}
 
 	questionRepo := application.NewSQLiteQuestionRepository(db)
 	answerRepo := application.NewSQLiteAnswerRepository(db)
@@ -575,9 +583,59 @@ func runQuestionnaire(applicationID int64, db *database.DB) {
 
 	resolver := application.NewAnswerResolver(answerRepo)
 
+	resumeConfig := cfg.Resume.Resume
+
+	apiKey := os.Getenv(resumeConfig.LLM.APIKeyEnv)
+	if apiKey == "" {
+		log.Fatalf(
+			"questionnaire LLM API key environment variable %q is not set",
+			resumeConfig.LLM.APIKeyEnv,
+		)
+	}
+
+	resumeSource := application.NewResumeSource(
+		application.ResumeSourceConfig{
+			MasterPath:            resumeConfig.MasterPath,
+			OutputFormat:          resumeConfig.OutputFormat,
+			PreserveFacts:         resumeConfig.Generation.PreserveFacts,
+			AllowRewording:        resumeConfig.Generation.AllowRewording,
+			AllowReordering:       resumeConfig.Generation.AllowReordering,
+			AllowSkillSelection:   resumeConfig.Generation.AllowSkillSelection,
+			AllowMetricChanges:    resumeConfig.Generation.AllowMetricChanges,
+			AllowExperienceInvent: resumeConfig.Generation.AllowExperienceInvention,
+		},
+	)
+
+	contextBuilder := application.NewCandidateContextBuilder(
+		cfg.Candidate.Candidate,
+		resumeSource,
+	)
+
+	candidateContext, err := contextBuilder.Build()
+	if err != nil {
+		log.Fatalf("build candidate context: %v", err)
+	}
+
+	llmClient, err := openrouter.NewClient(
+		openrouter.Config{
+			APIKey:  apiKey,
+			Model:   resumeConfig.LLM.Model,
+			BaseURL: resumeConfig.LLM.BaseURL,
+		},
+	)
+	if err != nil {
+		log.Fatalf("initialize questionnaire LLM: %v", err)
+	}
+
+	questionAnswerLLM := application.NewLLMQuestionAnswerGenerator(
+		llmClient,
+	)
+
 	service := application.NewQuestionnaireService(
 		questionRepo,
 		resolver,
+		questionAnswerLLM,
+		candidateContext,
 		eventRepo,
 	)
 
@@ -592,6 +650,7 @@ func runQuestionnaire(applicationID int64, db *database.DB) {
 	fmt.Println("JobClaw Questionnaire")
 	fmt.Println("────────────────────────────")
 	fmt.Printf("Application ID: %d\n", applicationID)
+	fmt.Printf("Model:          %s\n", resumeConfig.LLM.Model)
 	fmt.Println()
 
 	answered := 0
@@ -603,11 +662,17 @@ func runQuestionnaire(applicationID int64, db *database.DB) {
 			answered++
 
 			fmt.Printf(
-				"✓ [%d] %s → %s\n",
+				"✓ [%d] %s → %s",
 				result.QuestionID,
 				result.FieldKey,
 				result.Answer,
 			)
+
+			if result.Source == application.AnswerSourceLLM {
+				fmt.Print(" (LLM)")
+			}
+
+			fmt.Println()
 
 		case application.ResolutionNeedsReview:
 			needsReview++
