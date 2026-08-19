@@ -45,6 +45,22 @@ func (f *fakeQuestionRepository) GetByID(
 	return nil, nil
 }
 
+func (f *fakeQuestionRepository) FindByApplicationAndQuestion(
+	ctx context.Context,
+	applicationID int64,
+	question string,
+) (*ApplicationQuestion, error) {
+	for _, q := range f.questions {
+		if q.ApplicationID == applicationID &&
+			q.Question == question {
+			copy := q
+			return &copy, nil
+		}
+	}
+
+	return nil, nil
+}
+
 func (f *fakeQuestionRepository) ListByApplicationID(
 	ctx context.Context,
 	applicationID int64,

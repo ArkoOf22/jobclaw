@@ -166,8 +166,10 @@ func main() {
 			}
 
 		case "questionnaire":
-			if len(os.Args) != 3 {
-				log.Fatal("usage: jobclaw questionnaire <application_id>")
+			if len(os.Args) != 3 && len(os.Args) != 5 {
+				log.Fatal(
+					"usage: jobclaw questionnaire <application_id> [--source <path>]",
+				)
 			}
 
 			applicationID, err := strconv.ParseInt(os.Args[2], 10, 64)
@@ -175,7 +177,27 @@ func main() {
 				log.Fatal("application ID must be a positive integer")
 			}
 
-			runQuestionnaire(applicationID, cfg, db)
+			var sourcePath string
+
+			if len(os.Args) == 5 {
+				if os.Args[3] != "--source" {
+					log.Fatal(
+						"usage: jobclaw questionnaire <application_id> [--source <path>]",
+					)
+				}
+
+				sourcePath = os.Args[4]
+				if sourcePath == "" {
+					log.Fatal("questionnaire source path is required")
+				}
+			}
+
+			runQuestionnaire(
+				applicationID,
+				sourcePath,
+				cfg,
+				db,
+			)
 			return
 
 		case "resume":
@@ -564,6 +586,7 @@ func runAnswerList(db *database.DB) {
 
 func runQuestionnaire(
 	applicationID int64,
+	sourcePath string,
 	cfg *config.Config,
 	db *database.DB,
 ) {
@@ -631,26 +654,70 @@ func runQuestionnaire(
 		llmClient,
 	)
 
-	service := application.NewQuestionnaireService(
-		questionRepo,
-		resolver,
-		questionAnswerLLM,
-		candidateContext,
-		eventRepo,
-	)
+	var results []application.AnswerResolution
 
-	results, err := service.ProcessApplication(
-		ctx,
-		applicationID,
-	)
-	if err != nil {
-		log.Fatalf("process questionnaire: %v", err)
+	if sourcePath != "" {
+		raw, err := os.ReadFile(filepath.Clean(sourcePath))
+		if err != nil {
+			log.Fatalf(
+				"read questionnaire source %q: %v",
+				sourcePath,
+				err,
+			)
+		}
+
+		ingestor := application.NewQuestionnaireIngestor(
+			questionRepo,
+			eventRepo,
+		)
+
+		extractor := application.NewTextQuestionnaireExtractor()
+
+		service := application.NewApplicationQuestionnaireService(
+			extractor,
+			ingestor,
+			questionRepo,
+			resolver,
+			questionAnswerLLM,
+			candidateContext,
+			eventRepo,
+		)
+
+		results, err = service.ProcessSource(
+			ctx,
+			applicationID,
+			string(raw),
+		)
+		if err != nil {
+			log.Fatalf("process questionnaire source: %v", err)
+		}
+	} else {
+		service := application.NewQuestionnaireService(
+			questionRepo,
+			resolver,
+			questionAnswerLLM,
+			candidateContext,
+			eventRepo,
+		)
+
+		results, err = service.ProcessApplication(
+			ctx,
+			applicationID,
+		)
+		if err != nil {
+			log.Fatalf("process questionnaire: %v", err)
+		}
 	}
 
 	fmt.Println("JobClaw Questionnaire")
 	fmt.Println("────────────────────────────")
 	fmt.Printf("Application ID: %d\n", applicationID)
 	fmt.Printf("Model:          %s\n", resumeConfig.LLM.Model)
+
+	if sourcePath != "" {
+		fmt.Printf("Source:         %s\n", sourcePath)
+	}
+
 	fmt.Println()
 
 	answered := 0

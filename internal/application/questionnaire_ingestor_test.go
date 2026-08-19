@@ -230,3 +230,107 @@ func TestQuestionnaireIngestorPersistsNormalizedQuestions(t *testing.T) {
 		)
 	}
 }
+
+func TestQuestionnaireIngestorIsIdempotent(t *testing.T) {
+	questions := &fakeQuestionRepository{}
+	events := &fakeEventRepository{}
+
+	ingestor := NewQuestionnaireIngestor(
+		questions,
+		events,
+	)
+
+	inputs := []QuestionnaireInput{
+		{
+			Question: "What is your notice period?",
+			FieldKey: "notice_period",
+		},
+		{
+			Question: "Are you willing to relocate?",
+			FieldKey: "relocation",
+		},
+	}
+
+	if err := ingestor.Ingest(
+		context.Background(),
+		300,
+		inputs,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ingestor.Ingest(
+		context.Background(),
+		300,
+		inputs,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(questions.questions) != 2 {
+		t.Fatalf(
+			"questions = %d, want 2",
+			len(questions.questions),
+		)
+	}
+}
+
+func TestQuestionnaireIngestorDoesNotOverwriteExistingAnswer(t *testing.T) {
+	questions := &fakeQuestionRepository{
+		questions: []ApplicationQuestion{
+			{
+				ID:            10,
+				ApplicationID: 301,
+				Question:      "What is your notice period?",
+				FieldKey:      "notice_period",
+				Answer:        "60 days",
+				AnswerSource:  AnswerSourceManual,
+				Status:        QuestionApproved,
+			},
+		},
+	}
+
+	ingestor := NewQuestionnaireIngestor(
+		questions,
+		nil,
+	)
+
+	err := ingestor.Ingest(
+		context.Background(),
+		301,
+		[]QuestionnaireInput{
+			{
+				Question: "What is your notice period?",
+				FieldKey: "notice_period",
+			},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(questions.questions) != 1 {
+		t.Fatalf(
+			"questions = %d, want 1",
+			len(questions.questions),
+		)
+	}
+
+	q := questions.questions[0]
+
+	if q.Answer != "60 days" {
+		t.Fatalf(
+			"answer = %q, want %q",
+			q.Answer,
+			"60 days",
+		)
+	}
+
+	if q.Status != QuestionApproved {
+		t.Fatalf(
+			"status = %q, want %q",
+			q.Status,
+			QuestionApproved,
+		)
+	}
+}

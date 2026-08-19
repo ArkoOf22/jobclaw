@@ -62,7 +62,26 @@ func (i *QuestionnaireIngestor) Ingest(
 		fieldKey := strings.TrimSpace(input.FieldKey)
 		metadata := strings.TrimSpace(input.Metadata)
 
-		err := i.questions.Create(
+		existing, err := i.questions.FindByApplicationAndQuestion(
+			ctx,
+			applicationID,
+			question,
+		)
+		if err != nil {
+			return fmt.Errorf(
+				"check questionnaire question %d: %w",
+				index,
+				err,
+			)
+		}
+
+		if existing != nil {
+			// Existing questions may already contain an answer or
+			// approval. Never overwrite them during ingestion.
+			continue
+		}
+
+		err = i.questions.Create(
 			ctx,
 			ApplicationQuestion{
 				ApplicationID: applicationID,

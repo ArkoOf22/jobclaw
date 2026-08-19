@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"jobclaw/internal/database"
 )
@@ -11,6 +12,11 @@ import (
 type QuestionRepository interface {
 	Create(ctx context.Context, question ApplicationQuestion) error
 	GetByID(ctx context.Context, id int64) (*ApplicationQuestion, error)
+	FindByApplicationAndQuestion(
+		ctx context.Context,
+		applicationID int64,
+		question string,
+	) (*ApplicationQuestion, error)
 	ListByApplicationID(
 		ctx context.Context,
 		applicationID int64,
@@ -61,6 +67,7 @@ func (r *SQLiteQuestionRepository) Create(
 			metadata
 		)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(application_id, question) DO NOTHING
 	`,
 		question.ApplicationID,
 		question.Question,
@@ -140,6 +147,97 @@ func (r *SQLiteQuestionRepository) GetByID(
 	updated, err := parseTime(updatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("parse question updated_at: %w", err)
+	}
+
+	q.CreatedAt = created
+	q.UpdatedAt = updated
+
+	return &q, nil
+}
+
+func (r *SQLiteQuestionRepository) FindByApplicationAndQuestion(
+	ctx context.Context,
+	applicationID int64,
+	question string,
+) (*ApplicationQuestion, error) {
+	if applicationID <= 0 {
+		return nil, fmt.Errorf("application ID must be positive")
+	}
+
+	question = strings.TrimSpace(question)
+	if question == "" {
+		return nil, fmt.Errorf("question is required")
+	}
+
+	row := r.db.QueryRowContext(ctx, `
+		SELECT
+			id,
+			application_id,
+			question,
+			COALESCE(field_key, ''),
+			COALESCE(answer, ''),
+			COALESCE(answer_source, ''),
+			status,
+			COALESCE(metadata, ''),
+			created_at,
+			updated_at
+		FROM application_questions
+		WHERE application_id = ?
+		  AND question = ?
+		ORDER BY id ASC
+		LIMIT 1
+	`,
+		applicationID,
+		question,
+	)
+
+	var (
+		q         ApplicationQuestion
+		source    string
+		status    string
+		createdAt string
+		updatedAt string
+	)
+
+	if err := row.Scan(
+		&q.ID,
+		&q.ApplicationID,
+		&q.Question,
+		&q.FieldKey,
+		&q.Answer,
+		&source,
+		&status,
+		&q.Metadata,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+
+		return nil, fmt.Errorf(
+			"find application question: %w",
+			err,
+		)
+	}
+
+	q.AnswerSource = AnswerSource(source)
+	q.Status = QuestionStatus(status)
+
+	created, err := parseTime(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"parse question created_at: %w",
+			err,
+		)
+	}
+
+	updated, err := parseTime(updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"parse question updated_at: %w",
+			err,
+		)
 	}
 
 	q.CreatedAt = created

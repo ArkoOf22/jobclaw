@@ -273,3 +273,51 @@ func TestSQLiteQuestionRepositoryReturnsEmptyList(
 		)
 	}
 }
+
+func TestSQLiteQuestionRepositoryIgnoresDuplicateQuestion(
+	t *testing.T,
+) {
+	db, err := database.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := db.MigrateEmbedded(); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+
+	questionRepo := NewSQLiteQuestionRepository(db)
+
+	question := ApplicationQuestion{
+		ApplicationID: 1,
+		Question:      "Are you authorized to work in India?",
+		FieldKey:      "work_authorization",
+		Status:        QuestionNeedsReview,
+	}
+
+	if err := questionRepo.Create(ctx, question); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := questionRepo.Create(ctx, question); err != nil {
+		t.Fatalf("duplicate Create() returned error: %v", err)
+	}
+
+	questions, err := questionRepo.ListByApplicationID(
+		ctx,
+		1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(questions) != 1 {
+		t.Fatalf(
+			"questions = %d, want 1 after duplicate Create()",
+			len(questions),
+		)
+	}
+}

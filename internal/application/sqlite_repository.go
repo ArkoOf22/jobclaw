@@ -50,6 +50,79 @@ func (r *SQLiteRepository) Create(
 	return nil
 }
 
+func (r *SQLiteRepository) GetByID(
+	ctx context.Context,
+	id int64,
+) (*Application, error) {
+	if id <= 0 {
+		return nil, fmt.Errorf("application ID must be positive")
+	}
+
+	row := r.db.QueryRowContext(ctx, `
+		SELECT
+			id,
+			job_id,
+			status,
+			COALESCE(tailored_resume_path, ''),
+			COALESCE(cover_letter_path, ''),
+			COALESCE(referral_message_path, ''),
+			COALESCE(application_answers_path, ''),
+			created_at,
+			updated_at
+		FROM applications
+		WHERE id = ?
+		LIMIT 1
+	`, id)
+
+	var (
+		app       Application
+		status    string
+		createdAt string
+		updatedAt string
+	)
+
+	if err := row.Scan(
+		&app.ID,
+		&app.JobID,
+		&status,
+		&app.TailoredResumePath,
+		&app.CoverLetterPath,
+		&app.ReferralMessagePath,
+		&app.ApplicationAnswersPath,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+
+		return nil, fmt.Errorf("get application by ID: %w", err)
+	}
+
+	app.Status = Status(status)
+
+	created, err := parseTime(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"parse application created_at: %w",
+			err,
+		)
+	}
+
+	updated, err := parseTime(updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"parse application updated_at: %w",
+			err,
+		)
+	}
+
+	app.CreatedAt = created
+	app.UpdatedAt = updated
+
+	return &app, nil
+}
+
 func (r *SQLiteRepository) GetByJobID(
 	ctx context.Context,
 	jobID int64,
