@@ -516,7 +516,24 @@ func runSubmit(
 	applicationRepo := application.NewSQLiteRepository(db)
 	jobRepo := job.NewSQLiteRepository(db)
 	eventRepo := application.NewSQLiteEventRepository(db)
-	submitter := application.NewManualSubmitter()
+
+	registry := application.NewStaticSubmissionAdapterRegistry()
+
+	// Until external adapters are implemented, register manual submission
+	// as the available adapter. The registry remains the routing boundary.
+	manualAdapter := application.NewManualSubmissionAdapter()
+	if err := registry.Register(
+		application.SubmissionTargetManual,
+		manualAdapter,
+	); err != nil {
+		fmt.Printf("configure submission adapter: %v\n", err)
+		return
+	}
+
+	submitter := application.NewRegistrySubmissionSubmitter(
+		registry,
+	)
+
 	transactionFactory := application.NewSQLiteSubmissionTransactionFactory(db)
 
 	service := application.NewApplicationSubmissionService(
