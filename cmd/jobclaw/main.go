@@ -200,6 +200,19 @@ func main() {
 			)
 			return
 
+		case "prepare":
+			if len(os.Args) != 3 {
+				log.Fatal("usage: jobclaw prepare <application_id>")
+			}
+
+			applicationID, err := strconv.ParseInt(os.Args[2], 10, 64)
+			if err != nil || applicationID <= 0 {
+				log.Fatal("application ID must be a positive integer")
+			}
+
+			runPrepare(applicationID, db)
+			return
+
 		case "resume":
 			if len(os.Args) != 3 {
 				log.Fatal("usage: jobclaw resume <id>")
@@ -402,6 +415,79 @@ func runResume(
 	fmt.Printf("Job ID:     %d\n", jobID)
 	fmt.Printf("Model:      %s\n", resumeConfig.LLM.Model)
 	fmt.Printf("Output:     %s\n", outputPath)
+}
+
+func runPrepare(
+	applicationID int64,
+	db *database.DB,
+) {
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		30*time.Second,
+	)
+	defer cancel()
+
+	applicationRepo := application.NewSQLiteRepository(db)
+	questionRepo := application.NewSQLiteQuestionRepository(db)
+	answerRepo := application.NewSQLiteAnswerRepository(db)
+	eventRepo := application.NewSQLiteEventRepository(db)
+
+	answerResolver := application.NewAnswerResolver(answerRepo)
+
+	questionnaireService := application.NewQuestionnaireService(
+		questionRepo,
+		answerResolver,
+		nil,
+		"",
+		eventRepo,
+	)
+
+	service := application.NewApplicationPreparationService(
+		applicationRepo,
+		questionRepo,
+		eventRepo,
+		questionnaireService,
+	)
+
+	readiness, err := service.Prepare(
+		ctx,
+		applicationID,
+	)
+	if err != nil {
+		log.Fatalf("prepare application: %v", err)
+	}
+
+	fmt.Println("JobClaw Application Preparation")
+	fmt.Println("────────────────────────────")
+	fmt.Printf("Application ID: %d\n", applicationID)
+	fmt.Printf("Readiness:      %s\n", readiness.Status)
+	fmt.Println()
+
+	for _, check := range readiness.Checks {
+		switch check.Status {
+		case application.ReadinessReady:
+			fmt.Printf("✓ %-20s %s\n", check.Name, check.Reason)
+
+		case application.ReadinessBlocked:
+			fmt.Printf("⚠ %-20s %s\n", check.Name, check.Reason)
+		}
+	}
+
+	if !readiness.Ready() {
+		fmt.Println()
+		fmt.Println("Application is NOT ready to apply.")
+		fmt.Println()
+		fmt.Println("Blockers:")
+
+		for _, blocker := range readiness.Blockers {
+			fmt.Printf("  • %s\n", blocker)
+		}
+
+		return
+	}
+
+	fmt.Println()
+	fmt.Println("✓ Application is READY_TO_APPLY")
 }
 
 func runApplication(jobID int64, cfg *config.Config, db *database.DB) {

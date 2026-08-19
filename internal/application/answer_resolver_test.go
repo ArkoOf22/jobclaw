@@ -273,3 +273,21 @@ func TestAnswerResolverClassifiesQuestionBeforeLLMFallback(t *testing.T) {
 		)
 	}
 }
+
+func TestClassifyQuestionFieldPreferredProgrammingLanguage(t *testing.T) {
+	tests := []string{
+		"What is your preferred programming language?",
+		"Which programming language do you prefer?",
+		"What programming language are you most comfortable with?",
+	}
+
+	for _, question := range tests {
+		if got := classifyQuestionField(question); got != "preferred_programming_language" {
+			t.Fatalf(
+				"classifyQuestionField(%q) = %q, want preferred_programming_language",
+				question,
+				got,
+			)
+		}
+	}
+}

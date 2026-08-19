@@ -13,6 +13,7 @@ const (
 	EventQuestionnaireIngested     EventType = "QUESTIONNAIRE_INGESTED"
 	EventQuestionAnswered          EventType = "QUESTION_ANSWERED"
 	EventQuestionNeedsReview       EventType = "QUESTION_NEEDS_REVIEW"
+	EventApplicationReady          EventType = "APPLICATION_READY"
 )
 
 type Event struct {

@@ -58,6 +58,10 @@ func classifyQuestionField(question string) string {
 		strings.Contains(q, "compensation expectation"):
 		return "salary_expectation"
 
+	case strings.Contains(q, "preferred programming language"),
+		strings.Contains(q, "programming language"):
+		return "preferred_programming_language"
+
 	default:
 		return ""
 	}
