@@ -250,11 +250,11 @@ func TestSQLiteApplicationSubmissionRollsBackAtomically(
 		t.Fatalf("load application: %v", err)
 	}
 
-	if app.Status != StatusReadyToApply {
+	if app.Status != StatusSubmissionInProgress {
 		t.Fatalf(
-			"application status = %q, want %q after rollback",
+			"application status = %q, want %q after local submission failure",
 			app.Status,
-			StatusReadyToApply,
+			StatusSubmissionInProgress,
 		)
 	}
 
@@ -292,7 +292,7 @@ func TestSQLiteApplicationSubmissionRollsBackAtomically(
 
 	if eventCount != 0 {
 		t.Fatalf(
-			"submission events = %d, want 0 after rollback",
+			"submission events = %d, want 0 after local submission failure",
 			eventCount,
 		)
 	}

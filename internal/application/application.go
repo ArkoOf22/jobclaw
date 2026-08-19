@@ -5,10 +5,11 @@ import "time"
 type Status string
 
 const (
-	StatusDraft          Status = "DRAFT"
-	StatusReadyForReview Status = "READY_FOR_REVIEW"
-	StatusReadyToApply   Status = "READY_TO_APPLY"
-	StatusApplied        Status = "APPLIED"
+	StatusDraft                Status = "DRAFT"
+	StatusReadyForReview       Status = "READY_FOR_REVIEW"
+	StatusReadyToApply         Status = "READY_TO_APPLY"
+	StatusSubmissionInProgress Status = "SUBMISSION_IN_PROGRESS"
+	StatusApplied              Status = "APPLIED"
 )
 
 type Application struct {

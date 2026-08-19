@@ -76,8 +76,9 @@ func (f *fakeSubmissionTransaction) Rollback() error {
 }
 
 type fakeSubmissionTransactionFactory struct {
-	tx  *fakeSubmissionTransaction
-	err error
+	transactions []*fakeSubmissionTransaction
+	err          error
+	index        int
 }
 
 func (f *fakeSubmissionTransactionFactory) BeginSubmissionTransaction(
@@ -87,7 +88,14 @@ func (f *fakeSubmissionTransactionFactory) BeginSubmissionTransaction(
 		return nil, f.err
 	}
 
-	return f.tx, nil
+	if f.index >= len(f.transactions) {
+		return nil, errors.New("no fake submission transaction available")
+	}
+
+	tx := f.transactions[f.index]
+	f.index++
+
+	return tx, nil
 }
 
 type fakeApplicationSubmitter struct {
@@ -101,7 +109,6 @@ func (f *fakeApplicationSubmitter) Submit(
 	j job.Job,
 ) error {
 	f.submissions++
-
 	return f.err
 }
 
@@ -119,13 +126,12 @@ func (f *fakeJobRepository) Upsert(
 
 	copy := j
 	f.jobs[j.ID] = &copy
-
 	return nil
 }
 
 func (f *fakeJobRepository) GetBySourceExternalID(
 	ctx context.Context,
-	source,
+	source string,
 	externalID string,
 ) (*job.Job, error) {
 	for _, j := range f.jobs {
@@ -143,7 +149,6 @@ func (f *fakeJobRepository) GetByID(
 	id int64,
 ) (*job.Job, error) {
 	j := f.jobs[id]
-
 	if j == nil {
 		return nil, nil
 	}
@@ -171,7 +176,6 @@ func (f *fakeJobRepository) UpdateStatus(
 	status job.Status,
 ) error {
 	j := f.jobs[id]
-
 	if j == nil {
 		return errors.New("job not found")
 	}
@@ -180,16 +184,16 @@ func (f *fakeJobRepository) UpdateStatus(
 	return nil
 }
 
-func TestApplicationSubmissionSucceeds(
-	t *testing.T,
+func newSubmissionFixture() (
+	*fakeApplicationRepository,
+	*fakeJobRepository,
 ) {
 	applications := &fakeApplicationRepository{
 		applications: map[int64]*Application{
 			100: {
-				ID:                 100,
-				JobID:              10,
-				Status:             StatusReadyToApply,
-				TailoredResumePath: "resume.txt",
+				ID:     100,
+				JobID:  10,
+				Status: StatusReadyToApply,
 			},
 		},
 	}
@@ -203,120 +207,165 @@ func TestApplicationSubmissionSucceeds(
 		},
 	}
 
-	events := &fakeEventRepository{}
+	return applications, jobs
+}
+
+func TestApplicationSubmissionSucceeds(t *testing.T) {
+	applications, jobs := newSubmissionFixture()
+
 	submitter := &fakeApplicationSubmitter{}
 
-	tx := &fakeSubmissionTransaction{}
+	attemptTx := &fakeSubmissionTransaction{}
+	finalTx := &fakeSubmissionTransaction{}
+
 	transactions := &fakeSubmissionTransactionFactory{
-		tx: tx,
+		transactions: []*fakeSubmissionTransaction{
+			attemptTx,
+			finalTx,
+		},
 	}
 
 	service := NewApplicationSubmissionService(
 		applications,
 		jobs,
-		events,
+		&fakeEventRepository{},
 		submitter,
 	)
 	service.SetTransactionFactory(transactions)
 
-	err := service.Submit(
-		context.Background(),
-		100,
-	)
+	err := service.Submit(context.Background(), 100)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if tx.applicationStatus != StatusApplied {
+	if submitter.submissions != 1 {
+		t.Fatalf("submissions = %d, want 1", submitter.submissions)
+	}
+
+	if attemptTx.applicationStatus != StatusSubmissionInProgress {
 		t.Fatalf(
-			"transaction application status = %q, want %q",
-			tx.applicationStatus,
+			"attempt application status = %q, want %q",
+			attemptTx.applicationStatus,
+			StatusSubmissionInProgress,
+		)
+	}
+
+	if !attemptTx.committed {
+		t.Fatal("submission attempt transaction was not committed")
+	}
+
+	if attemptTx.rolledBack {
+		t.Fatal("submission attempt transaction was rolled back")
+	}
+
+	if finalTx.applicationStatus != StatusApplied {
+		t.Fatalf(
+			"final application status = %q, want %q",
+			finalTx.applicationStatus,
 			StatusApplied,
 		)
 	}
 
-	if tx.jobStatus != job.StatusApplied {
+	if finalTx.jobStatus != job.StatusApplied {
 		t.Fatalf(
-			"transaction job status = %q, want %q",
-			tx.jobStatus,
+			"final job status = %q, want %q",
+			finalTx.jobStatus,
 			job.StatusApplied,
 		)
 	}
 
-	if !tx.committed {
-		t.Fatal("transaction was not committed")
-	}
-
-	if tx.rolledBack {
-		t.Fatal("transaction was rolled back after successful commit")
-	}
-
-	if submitter.submissions != 1 {
-		t.Fatalf(
-			"submissions = %d, want 1",
-			submitter.submissions,
-		)
-	}
-
-	if tx.event == nil {
+	if finalTx.event == nil {
 		t.Fatal("submission event was not created")
 	}
 
-	if tx.event.Type != EventApplicationSubmitted {
+	if finalTx.event.Type != EventApplicationSubmitted {
 		t.Fatalf(
 			"event = %q, want %q",
-			tx.event.Type,
+			finalTx.event.Type,
 			EventApplicationSubmitted,
 		)
 	}
+
+	if !finalTx.committed {
+		t.Fatal("final transaction was not committed")
+	}
+
+	if finalTx.rolledBack {
+		t.Fatal("final transaction was rolled back")
+	}
 }
 
-func TestApplicationSubmissionDoesNotChangeStateOnFailure(
-	t *testing.T,
-) {
-	applications := &fakeApplicationRepository{
-		applications: map[int64]*Application{
-			100: {
-				ID:     100,
-				JobID:  10,
-				Status: StatusReadyToApply,
-			},
-		},
-	}
+func TestApplicationSubmissionDoesNotChangeStateOnFailure(t *testing.T) {
+	applications, jobs := newSubmissionFixture()
 
-	jobs := &fakeJobRepository{
-		jobs: map[int64]*job.Job{
-			10: {
-				ID:     10,
-				Status: job.StatusApproved,
-			},
-		},
-	}
-
-	events := &fakeEventRepository{}
 	submitter := &fakeApplicationSubmitter{
-		err: errors.New("submission failed"),
+		err: errors.New("external submission failed"),
+	}
+
+	attemptTx := &fakeSubmissionTransaction{}
+	failureTx := &fakeSubmissionTransaction{}
+
+	transactions := &fakeSubmissionTransactionFactory{
+		transactions: []*fakeSubmissionTransaction{
+			attemptTx,
+			failureTx,
+		},
 	}
 
 	service := NewApplicationSubmissionService(
 		applications,
 		jobs,
-		events,
+		&fakeEventRepository{},
 		submitter,
 	)
+	service.SetTransactionFactory(transactions)
 
-	err := service.Submit(
-		context.Background(),
-		100,
-	)
+	err := service.Submit(context.Background(), 100)
 	if err == nil {
 		t.Fatal("expected submission failure")
 	}
 
-	app, err := applications.GetByID(
-		context.Background(),
-		100,
-	)
+	if submitter.submissions != 1 {
+		t.Fatalf("submissions = %d, want 1", submitter.submissions)
+	}
+
+	if attemptTx.applicationStatus != StatusSubmissionInProgress {
+		t.Fatalf(
+			"attempt status = %q, want %q",
+			attemptTx.applicationStatus,
+			StatusSubmissionInProgress,
+		)
+	}
+
+	if !attemptTx.committed {
+		t.Fatal("attempt transaction was not committed")
+	}
+
+	if failureTx.applicationStatus != StatusReadyToApply {
+		t.Fatalf(
+			"failure status = %q, want %q",
+			failureTx.applicationStatus,
+			StatusReadyToApply,
+		)
+	}
+
+	if failureTx.event == nil {
+		t.Fatal("submission failure event was not created")
+	}
+
+	if failureTx.event.Type != EventApplicationSubmissionFailed {
+		t.Fatalf(
+			"event = %q, want %q",
+			failureTx.event.Type,
+			EventApplicationSubmissionFailed,
+		)
+	}
+
+	if !failureTx.committed {
+		t.Fatal("failure-state transaction was not committed")
+	}
+
+	app, err := applications.GetByID(context.Background(), 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,10 +378,7 @@ func TestApplicationSubmissionDoesNotChangeStateOnFailure(
 		)
 	}
 
-	storedJob, err := jobs.GetByID(
-		context.Background(),
-		10,
-	)
+	storedJob, err := jobs.GetByID(context.Background(), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,49 +390,24 @@ func TestApplicationSubmissionDoesNotChangeStateOnFailure(
 			job.StatusApproved,
 		)
 	}
-
-	if len(events.events) != 1 {
-		t.Fatalf(
-			"events = %d, want 1",
-			len(events.events),
-		)
-	}
-
-	if events.events[0].Type != EventApplicationSubmissionFailed {
-		t.Fatalf(
-			"event = %q, want %q",
-			events.events[0].Type,
-			EventApplicationSubmissionFailed,
-		)
-	}
 }
 
-func TestApplicationSubmissionRollsBackLocalChanges(
-	t *testing.T,
-) {
-	applications := &fakeApplicationRepository{
-		applications: map[int64]*Application{
-			100: {
-				ID:     100,
-				JobID:  10,
-				Status: StatusReadyToApply,
-			},
-		},
-	}
-
-	jobs := &fakeJobRepository{
-		jobs: map[int64]*job.Job{
-			10: {
-				ID:     10,
-				Status: job.StatusApproved,
-			},
-		},
-	}
+func TestApplicationSubmissionRollsBackLocalChanges(t *testing.T) {
+	applications, jobs := newSubmissionFixture()
 
 	submitter := &fakeApplicationSubmitter{}
 
-	tx := &fakeSubmissionTransaction{
+	attemptTx := &fakeSubmissionTransaction{}
+
+	finalTx := &fakeSubmissionTransaction{
 		updateJobErr: errors.New("job status update failed"),
+	}
+
+	transactions := &fakeSubmissionTransactionFactory{
+		transactions: []*fakeSubmissionTransaction{
+			attemptTx,
+			finalTx,
+		},
 	}
 
 	service := NewApplicationSubmissionService(
@@ -395,90 +416,45 @@ func TestApplicationSubmissionRollsBackLocalChanges(
 		&fakeEventRepository{},
 		submitter,
 	)
-	service.SetTransactionFactory(
-		&fakeSubmissionTransactionFactory{tx: tx},
-	)
+	service.SetTransactionFactory(transactions)
 
-	err := service.Submit(
-		context.Background(),
-		100,
-	)
+	err := service.Submit(context.Background(), 100)
 	if err == nil {
 		t.Fatal("expected transaction failure")
 	}
 
-	if tx.applicationStatus != StatusApplied {
+	if submitter.submissions != 1 {
+		t.Fatalf("submissions = %d, want 1", submitter.submissions)
+	}
+
+	if !attemptTx.committed {
+		t.Fatal("submission attempt transaction was not committed")
+	}
+
+	if finalTx.applicationStatus != StatusApplied {
 		t.Fatalf(
-			"transaction application status = %q, want %q before rollback",
-			tx.applicationStatus,
+			"final transaction application status = %q, want %q",
+			finalTx.applicationStatus,
 			StatusApplied,
 		)
 	}
 
-	if !tx.rolledBack {
-		t.Fatal("transaction was not rolled back")
+	if finalTx.committed {
+		t.Fatal("failed final transaction was committed")
 	}
 
-	if tx.committed {
-		t.Fatal("failed transaction was committed")
-	}
-
-	app, err := applications.GetByID(
-		context.Background(),
-		100,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if app.Status != StatusReadyToApply {
-		t.Fatalf(
-			"application status = %q, want %q",
-			app.Status,
-			StatusReadyToApply,
-		)
-	}
-
-	storedJob, err := jobs.GetByID(
-		context.Background(),
-		10,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if storedJob.Status != job.StatusApproved {
-		t.Fatalf(
-			"job status = %q, want %q",
-			storedJob.Status,
-			job.StatusApproved,
-		)
+	if !finalTx.rolledBack {
+		t.Fatal("failed final transaction was not rolled back")
 	}
 }
 
-func TestApplicationSubmissionRejectsNonReadyApplication(
-	t *testing.T,
-) {
-	applications := &fakeApplicationRepository{
-		applications: map[int64]*Application{
-			100: {
-				ID:     100,
-				JobID:  10,
-				Status: StatusDraft,
-			},
-		},
-	}
+func TestApplicationSubmissionRejectsNonReadyApplication(t *testing.T) {
+	applications, jobs := newSubmissionFixture()
 
-	jobs := &fakeJobRepository{
-		jobs: map[int64]*job.Job{
-			10: {
-				ID:     10,
-				Status: job.StatusApproved,
-			},
-		},
-	}
+	applications.applications[100].Status = StatusDraft
 
 	submitter := &fakeApplicationSubmitter{}
+	transactions := &fakeSubmissionTransactionFactory{}
 
 	service := NewApplicationSubmissionService(
 		applications,
@@ -486,46 +462,32 @@ func TestApplicationSubmissionRejectsNonReadyApplication(
 		&fakeEventRepository{},
 		submitter,
 	)
+	service.SetTransactionFactory(transactions)
 
-	err := service.Submit(
-		context.Background(),
-		100,
-	)
+	err := service.Submit(context.Background(), 100)
 	if err == nil {
 		t.Fatal("expected non-ready application to be rejected")
 	}
 
 	if submitter.submissions != 0 {
+		t.Fatalf("submissions = %d, want 0", submitter.submissions)
+	}
+
+	if transactions.index != 0 {
 		t.Fatalf(
-			"submissions = %d, want 0",
-			submitter.submissions,
+			"transactions started = %d, want 0",
+			transactions.index,
 		)
 	}
 }
 
-func TestApplicationSubmissionRejectsNonApprovedJob(
-	t *testing.T,
-) {
-	applications := &fakeApplicationRepository{
-		applications: map[int64]*Application{
-			100: {
-				ID:     100,
-				JobID:  10,
-				Status: StatusReadyToApply,
-			},
-		},
-	}
+func TestApplicationSubmissionRejectsNonApprovedJob(t *testing.T) {
+	applications, jobs := newSubmissionFixture()
 
-	jobs := &fakeJobRepository{
-		jobs: map[int64]*job.Job{
-			10: {
-				ID:     10,
-				Status: job.StatusShortlisted,
-			},
-		},
-	}
+	jobs.jobs[10].Status = job.StatusDiscovered
 
 	submitter := &fakeApplicationSubmitter{}
+	transactions := &fakeSubmissionTransactionFactory{}
 
 	service := NewApplicationSubmissionService(
 		applications,
@@ -533,19 +495,21 @@ func TestApplicationSubmissionRejectsNonApprovedJob(
 		&fakeEventRepository{},
 		submitter,
 	)
+	service.SetTransactionFactory(transactions)
 
-	err := service.Submit(
-		context.Background(),
-		100,
-	)
+	err := service.Submit(context.Background(), 100)
 	if err == nil {
 		t.Fatal("expected non-approved job to be rejected")
 	}
 
 	if submitter.submissions != 0 {
+		t.Fatalf("submissions = %d, want 0", submitter.submissions)
+	}
+
+	if transactions.index != 0 {
 		t.Fatalf(
-			"submissions = %d, want 0",
-			submitter.submissions,
+			"transactions started = %d, want 0",
+			transactions.index,
 		)
 	}
 }

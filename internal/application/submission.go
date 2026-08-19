@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"jobclaw/internal/job"
 )
@@ -97,20 +98,22 @@ func (s *ApplicationSubmissionService) Submit(
 		)
 	}
 
-	// External submission happens before the database state transition.
-	// We cannot roll back an external submission, so only update local
-	// state after the external system confirms success.
-	if err := s.submitter.Submit(ctx, *app, *j); err != nil {
-		if s.events != nil {
-			_ = s.events.Create(ctx, Event{
-				ApplicationID: applicationID,
-				Type:          EventApplicationSubmissionFailed,
-				Metadata:      err.Error(),
-			})
-		}
-
-		return fmt.Errorf("submit application: %w", err)
+	// A previous attempt may have already crossed the external-system
+	// boundary. Never blindly retry an ambiguous submission.
+	if app.Status == StatusSubmissionInProgress {
+		return fmt.Errorf(
+			"application %d has an ambiguous submission attempt; reconciliation is required",
+			applicationID,
+		)
 	}
+
+	// Mark the submission attempt before crossing the external boundary.
+	// The attempt marker itself is persisted transactionally.
+	attemptID := fmt.Sprintf(
+		"submission-%d-%d",
+		applicationID,
+		time.Now().UnixNano(),
+	)
 
 	if s.transactions == nil {
 		return fmt.Errorf(
@@ -119,6 +122,103 @@ func (s *ApplicationSubmissionService) Submit(
 	}
 
 	tx, err := beginSubmissionTransaction(ctx, s.transactions)
+	if err != nil {
+		return err
+	}
+
+	if err := tx.UpdateApplicationStatus(
+		ctx,
+		applicationID,
+		StatusSubmissionInProgress,
+	); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf(
+			"mark submission in progress: %w",
+			err,
+		)
+	}
+
+	if err := tx.CreateEvent(ctx, Event{
+		ApplicationID: applicationID,
+		Type:          EventApplicationSubmissionStarted,
+		Metadata:      fmt.Sprintf("attempt_id=%s job_id=%d", attemptID, j.ID),
+	}); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf(
+			"create submission started event: %w",
+			err,
+		)
+	}
+
+	if err := tx.Commit(); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf(
+			"commit submission attempt: %w",
+			err,
+		)
+	}
+
+	// External submission happens only after the attempt is durably marked
+	// as in-progress. If the process dies after this point, a retry will
+	// require reconciliation instead of blindly submitting again.
+	// We cannot roll back an external submission, so only update local
+	// state after the external system confirms success.
+	if err := s.submitter.Submit(ctx, *app, *j); err != nil {
+		// The external submitter returned a definitive failure, so this
+		// attempt did not cross the successful submission boundary.
+		// Move the application back to READY_TO_APPLY and record the failure.
+		tx, txErr := beginSubmissionTransaction(ctx, s.transactions)
+		if txErr != nil {
+			return fmt.Errorf(
+				"submit application: %w; restore submission state: %v",
+				err,
+				txErr,
+			)
+		}
+
+		if txErr := tx.UpdateApplicationStatus(
+			ctx,
+			applicationID,
+			StatusReadyToApply,
+		); txErr != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf(
+				"submit application: %w; restore submission state: %v",
+				err,
+				txErr,
+			)
+		}
+
+		if txErr := tx.CreateEvent(ctx, Event{
+			ApplicationID: applicationID,
+			Type:          EventApplicationSubmissionFailed,
+			Metadata: fmt.Sprintf(
+				"attempt_id=%s error=%s",
+				attemptID,
+				err.Error(),
+			),
+		}); txErr != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf(
+				"submit application: %w; record failure: %v",
+				err,
+				txErr,
+			)
+		}
+
+		if txErr := tx.Commit(); txErr != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf(
+				"submit application: %w; commit failure state: %v",
+				err,
+				txErr,
+			)
+		}
+
+		return fmt.Errorf("submit application: %w", err)
+	}
+
+	tx, err = beginSubmissionTransaction(ctx, s.transactions)
 	if err != nil {
 		return err
 	}
