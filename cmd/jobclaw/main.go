@@ -213,6 +213,19 @@ func main() {
 			runPrepare(applicationID, db)
 			return
 
+		case "submit":
+			if len(os.Args) != 3 {
+				log.Fatal("usage: jobclaw submit <application_id>")
+			}
+
+			applicationID, err := strconv.ParseInt(os.Args[2], 10, 64)
+			if err != nil || applicationID <= 0 {
+				log.Fatal("application ID must be a positive integer")
+			}
+
+			runSubmit(applicationID, db)
+			return
+
 		case "resume":
 			if len(os.Args) != 3 {
 				log.Fatal("usage: jobclaw resume <id>")
@@ -488,6 +501,52 @@ func runPrepare(
 
 	fmt.Println()
 	fmt.Println("✓ Application is READY_TO_APPLY")
+}
+
+func runSubmit(
+	applicationID int64,
+	db *database.DB,
+) {
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		30*time.Second,
+	)
+	defer cancel()
+
+	applicationRepo := application.NewSQLiteRepository(db)
+	jobRepo := job.NewSQLiteRepository(db)
+	eventRepo := application.NewSQLiteEventRepository(db)
+	submitter := application.NewManualSubmitter()
+	transactionFactory := application.NewSQLiteSubmissionTransactionFactory(db)
+
+	service := application.NewApplicationSubmissionService(
+		applicationRepo,
+		jobRepo,
+		eventRepo,
+		submitter,
+	)
+	service.SetTransactionFactory(transactionFactory)
+
+	err := service.Submit(
+		ctx,
+		applicationID,
+	)
+	if err != nil {
+		fmt.Println("JobClaw Application Submission")
+		fmt.Println("────────────────────────────")
+		fmt.Printf("Application ID: %d\n", applicationID)
+		fmt.Println()
+		fmt.Println("External submission is not configured.")
+		fmt.Println("No application was submitted.")
+		fmt.Println()
+		fmt.Printf("Details: %v\n", err)
+		return
+	}
+
+	fmt.Println("JobClaw Application Submission")
+	fmt.Println("────────────────────────────")
+	fmt.Printf("Application ID: %d\n", applicationID)
+	fmt.Println("Application submitted successfully.")
 }
 
 func runApplication(jobID int64, cfg *config.Config, db *database.DB) {
@@ -798,7 +857,6 @@ func runQuestionnaire(
 	fmt.Println("JobClaw Questionnaire")
 	fmt.Println("────────────────────────────")
 	fmt.Printf("Application ID: %d\n", applicationID)
-	fmt.Printf("Model:          %s\n", resumeConfig.LLM.Model)
 
 	if sourcePath != "" {
 		fmt.Printf("Source:         %s\n", sourcePath)
