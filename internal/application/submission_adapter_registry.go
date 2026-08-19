@@ -63,7 +63,9 @@ func (r *StaticSubmissionAdapterRegistry) Get(
 }
 
 type RegistrySubmissionSubmitter struct {
-	registry SubmissionAdapterRegistry
+	registry  SubmissionAdapterRegistry
+	questions QuestionRepository
+	resolver  *AnswerResolver
 }
 
 func NewRegistrySubmissionSubmitter(
@@ -72,6 +74,14 @@ func NewRegistrySubmissionSubmitter(
 	return &RegistrySubmissionSubmitter{
 		registry: registry,
 	}
+}
+
+func (s *RegistrySubmissionSubmitter) SetDataProvider(
+	questions QuestionRepository,
+	resolver *AnswerResolver,
+) {
+	s.questions = questions
+	s.resolver = resolver
 }
 
 func (s *RegistrySubmissionSubmitter) Submit(
@@ -85,6 +95,26 @@ func (s *RegistrySubmissionSubmitter) Submit(
 		)
 	}
 
+	if s.questions == nil {
+		return SubmissionFailed, fmt.Errorf(
+			"submission question repository is not configured",
+		)
+	}
+
+	if s.resolver == nil {
+		return SubmissionFailed, fmt.Errorf(
+			"submission answer resolver is not configured",
+		)
+	}
+
+	prepared, err := NewSubmissionDataProvider(
+		s.questions,
+		s.resolver,
+	).Prepare(ctx, app, j)
+	if err != nil {
+		return SubmissionFailed, err
+	}
+
 	target := ResolveSubmissionTarget(j)
 
 	adapter, err := s.registry.Get(target.Type)
@@ -96,5 +126,6 @@ func (s *RegistrySubmissionSubmitter) Submit(
 		Application: app,
 		Job:         j,
 		Target:      target,
+		Prepared:    prepared,
 	})
 }

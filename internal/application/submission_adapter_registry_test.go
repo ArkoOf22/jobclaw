@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"jobclaw/internal/job"
@@ -82,6 +83,21 @@ func TestStaticSubmissionAdapterRegistryRejectsUnknownTarget(
 func TestRegistrySubmissionSubmitterRoutesToAdapter(t *testing.T) {
 	registry := NewStaticSubmissionAdapterRegistry()
 
+	questions := &fakeQuestionRepository{
+		questions: []ApplicationQuestion{},
+	}
+
+	answers := &fakeAnswerRepository{}
+
+	resumePath := t.TempDir() + "/resume.pdf"
+	if err := os.WriteFile(
+		resumePath,
+		[]byte("test resume"),
+		0600,
+	); err != nil {
+		t.Fatalf("write test resume: %v", err)
+	}
+
 	adapter := &fakeSubmissionAdapter{
 		result: SubmissionSucceeded,
 	}
@@ -96,10 +112,15 @@ func TestRegistrySubmissionSubmitterRoutesToAdapter(t *testing.T) {
 	submitter := NewRegistrySubmissionSubmitter(
 		registry,
 	)
+	submitter.SetDataProvider(
+		questions,
+		NewAnswerResolver(answers),
+	)
 
 	app := Application{
-		ID:    100,
-		JobID: 10,
+		ID:                 100,
+		JobID:              10,
+		TailoredResumePath: resumePath,
 	}
 
 	j := job.Job{
@@ -163,12 +184,58 @@ func TestRegistrySubmissionSubmitterRoutesToAdapter(t *testing.T) {
 			"gh-123",
 		)
 	}
+
+	if string(adapter.request.Prepared.Resume) != "test resume" {
+		t.Fatalf(
+			"prepared resume = %q, want %q",
+			string(adapter.request.Prepared.Resume),
+			"test resume",
+		)
+	}
+
+	if adapter.request.Prepared.Application.ID != app.ID {
+		t.Fatalf(
+			"prepared application ID = %d, want %d",
+			adapter.request.Prepared.Application.ID,
+			app.ID,
+		)
+	}
+
+	if adapter.request.Prepared.Job.ID != j.ID {
+		t.Fatalf(
+			"prepared job ID = %d, want %d",
+			adapter.request.Prepared.Job.ID,
+			j.ID,
+		)
+	}
+
+	if len(adapter.request.Prepared.Answers) != 0 {
+		t.Fatalf(
+			"prepared answers = %d, want 0",
+			len(adapter.request.Prepared.Answers),
+		)
+	}
 }
 
 func TestRegistrySubmissionSubmitterPropagatesAdapterResult(
 	t *testing.T,
 ) {
 	registry := NewStaticSubmissionAdapterRegistry()
+
+	questions := &fakeQuestionRepository{
+		questions: []ApplicationQuestion{},
+	}
+
+	answers := &fakeAnswerRepository{}
+
+	resumePath := t.TempDir() + "/resume.pdf"
+	if err := os.WriteFile(
+		resumePath,
+		[]byte("test resume"),
+		0600,
+	); err != nil {
+		t.Fatalf("write test resume: %v", err)
+	}
 
 	adapterErr := errors.New("adapter failed")
 
@@ -187,10 +254,18 @@ func TestRegistrySubmissionSubmitterPropagatesAdapterResult(
 	submitter := NewRegistrySubmissionSubmitter(
 		registry,
 	)
+	submitter.SetDataProvider(
+		questions,
+		NewAnswerResolver(answers),
+	)
 
 	result, err := submitter.Submit(
 		context.Background(),
-		Application{ID: 100},
+		Application{
+			ID:                 100,
+			JobID:              10,
+			TailoredResumePath: resumePath,
+		},
 		job.Job{ID: 10},
 	)
 

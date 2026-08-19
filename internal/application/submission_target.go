@@ -29,6 +29,7 @@ type SubmissionRequest struct {
 	Application Application
 	Job         job.Job
 	Target      SubmissionTarget
+	Prepared    PreparedSubmission
 }
 
 type SubmissionAdapter interface {
