@@ -48,6 +48,7 @@ func classifyQuestionField(question string) string {
 
 	case strings.Contains(q, "years of experience"),
 		strings.Contains(q, "years experience"),
+		strings.Contains(q, "professional experience"),
 		strings.Contains(q, "total experience"):
 		return "years_experience"
 
