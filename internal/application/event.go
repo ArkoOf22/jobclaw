@@ -10,6 +10,8 @@ const (
 	EventResumeGenerationFailed    EventType = "RESUME_GENERATION_FAILED"
 	EventResumeGenerationSucceeded EventType = "RESUME_GENERATION_SUCCEEDED"
 	EventResumeValidationFailed    EventType = "RESUME_VALIDATION_FAILED"
+	EventQuestionAnswered          EventType = "QUESTION_ANSWERED"
+	EventQuestionNeedsReview       EventType = "QUESTION_NEEDS_REVIEW"
 )
 
 type Event struct {

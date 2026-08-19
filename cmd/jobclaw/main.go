@@ -123,6 +123,61 @@ func main() {
 			runApplication(jobID, cfg, db)
 			return
 
+		case "answer":
+			if len(os.Args) < 3 {
+				log.Fatal("usage: jobclaw answer <add|list> ...")
+			}
+
+			switch os.Args[2] {
+			case "add":
+				if len(os.Args) != 5 {
+					log.Fatal("usage: jobclaw answer add <field_key> <answer>")
+				}
+
+				runAnswerAdd(
+					os.Args[3],
+					os.Args[4],
+					db,
+				)
+				return
+
+			case "list":
+				if len(os.Args) != 3 {
+					log.Fatal("usage: jobclaw answer list")
+				}
+
+				runAnswerList(db)
+				return
+
+			case "update":
+				if len(os.Args) != 5 {
+					log.Fatal("usage: jobclaw answer update <field_key> <answer>")
+				}
+
+				runAnswerUpdate(
+					os.Args[3],
+					os.Args[4],
+					db,
+				)
+				return
+
+			default:
+				log.Fatal("usage: jobclaw answer <add|list> ...")
+			}
+
+		case "questionnaire":
+			if len(os.Args) != 3 {
+				log.Fatal("usage: jobclaw questionnaire <application_id>")
+			}
+
+			applicationID, err := strconv.ParseInt(os.Args[2], 10, 64)
+			if err != nil || applicationID <= 0 {
+				log.Fatal("application ID must be a positive integer")
+			}
+
+			runQuestionnaire(applicationID, db)
+			return
+
 		case "resume":
 			if len(os.Args) != 3 {
 				log.Fatal("usage: jobclaw resume <id>")
@@ -397,6 +452,178 @@ func runApplication(jobID int64, cfg *config.Config, db *database.DB) {
 	fmt.Println()
 	fmt.Println("Application workspace:")
 	fmt.Printf("data/applications/%d/\n", app.JobID)
+}
+
+func runAnswerAdd(
+	fieldKey string,
+	answer string,
+	db *database.DB,
+) {
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		30*time.Second,
+	)
+	defer cancel()
+
+	repo := application.NewSQLiteAnswerRepository(db)
+
+	candidateAnswer := application.CandidateAnswer{
+		FieldKey:  fieldKey,
+		Answer:    answer,
+		ValueType: application.AnswerValueText,
+		Verified:  true,
+	}
+
+	if err := repo.Create(ctx, candidateAnswer); err != nil {
+		log.Fatalf("add candidate answer: %v", err)
+	}
+
+	fmt.Println("Candidate answer added")
+	fmt.Println("────────────────────────────")
+	fmt.Printf("Field:    %s\n", fieldKey)
+	fmt.Printf("Answer:   %s\n", answer)
+	fmt.Printf("Verified: true\n")
+}
+
+func runAnswerUpdate(
+	fieldKey string,
+	answer string,
+	db *database.DB,
+) {
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		30*time.Second,
+	)
+	defer cancel()
+
+	repo := application.NewSQLiteAnswerRepository(db)
+
+	existing, err := repo.GetByFieldKey(ctx, fieldKey)
+	if err != nil {
+		log.Fatalf("find candidate answer: %v", err)
+	}
+
+	if existing == nil {
+		log.Fatalf("candidate answer for field %q does not exist", fieldKey)
+	}
+
+	existing.Answer = answer
+	existing.Verified = true
+
+	if err := repo.Update(ctx, *existing); err != nil {
+		log.Fatalf("update candidate answer: %v", err)
+	}
+
+	fmt.Println("Candidate answer updated")
+	fmt.Println("────────────────────────────")
+	fmt.Printf("Field:    %s\n", fieldKey)
+	fmt.Printf("Answer:   %s\n", answer)
+	fmt.Printf("Verified: true\n")
+}
+
+func runAnswerList(db *database.DB) {
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		30*time.Second,
+	)
+	defer cancel()
+
+	repo := application.NewSQLiteAnswerRepository(db)
+
+	answers, err := repo.List(ctx)
+	if err != nil {
+		log.Fatalf("list candidate answers: %v", err)
+	}
+
+	fmt.Println("JobClaw Candidate Answer Bank")
+	fmt.Println("────────────────────────────")
+
+	if len(answers) == 0 {
+		fmt.Println("No candidate answers configured.")
+		return
+	}
+
+	for _, answer := range answers {
+		status := "UNVERIFIED"
+		if answer.Verified {
+			status = "VERIFIED"
+		}
+
+		fmt.Printf(
+			"[%d] %-24s %s (%s)\n",
+			answer.ID,
+			answer.FieldKey,
+			answer.Answer,
+			status,
+		)
+	}
+
+	fmt.Println()
+	fmt.Printf("Total answers: %d\n", len(answers))
+}
+
+func runQuestionnaire(applicationID int64, db *database.DB) {
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		30*time.Second,
+	)
+	defer cancel()
+
+	questionRepo := application.NewSQLiteQuestionRepository(db)
+	answerRepo := application.NewSQLiteAnswerRepository(db)
+	eventRepo := application.NewSQLiteEventRepository(db)
+
+	resolver := application.NewAnswerResolver(answerRepo)
+
+	service := application.NewQuestionnaireService(
+		questionRepo,
+		resolver,
+		eventRepo,
+	)
+
+	results, err := service.ProcessApplication(
+		ctx,
+		applicationID,
+	)
+	if err != nil {
+		log.Fatalf("process questionnaire: %v", err)
+	}
+
+	fmt.Println("JobClaw Questionnaire")
+	fmt.Println("────────────────────────────")
+	fmt.Printf("Application ID: %d\n", applicationID)
+	fmt.Println()
+
+	answered := 0
+	needsReview := 0
+
+	for _, result := range results {
+		switch result.Status {
+		case application.ResolutionAnswered:
+			answered++
+
+			fmt.Printf(
+				"✓ [%d] %s → %s\n",
+				result.QuestionID,
+				result.FieldKey,
+				result.Answer,
+			)
+
+		case application.ResolutionNeedsReview:
+			needsReview++
+
+			fmt.Printf(
+				"⚠ [%d] NEEDS_REVIEW → %s\n",
+				result.QuestionID,
+				result.Reason,
+			)
+		}
+	}
+
+	fmt.Println()
+	fmt.Printf("Questions:    %d\n", len(results))
+	fmt.Printf("Answered:     %d\n", answered)
+	fmt.Printf("Needs Review: %d\n", needsReview)
 }
 
 func validateConfigFiles(paths ...string) error {
