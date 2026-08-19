@@ -17,14 +17,25 @@ func (s *ManualSubmitter) Submit(
 	ctx context.Context,
 	app Application,
 	j job.Job,
-) error {
+) (SubmissionResult, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return SubmissionFailed, err
 	}
 
-	return fmt.Errorf(
-		"manual submission required for application %d (job %d)",
+	if app.ID <= 0 {
+		return SubmissionFailed, fmt.Errorf(
+			"application ID must be positive",
+		)
+	}
+
+	if j.ID <= 0 {
+		return SubmissionFailed, fmt.Errorf(
+			"job ID must be positive",
+		)
+	}
+
+	return SubmissionFailed, fmt.Errorf(
+		"external application submission is not configured for application %d",
 		app.ID,
-		j.ID,
 	)
 }

@@ -100,6 +100,7 @@ func (f *fakeSubmissionTransactionFactory) BeginSubmissionTransaction(
 
 type fakeApplicationSubmitter struct {
 	err         error
+	result      SubmissionResult
 	submissions int
 }
 
@@ -107,9 +108,22 @@ func (f *fakeApplicationSubmitter) Submit(
 	ctx context.Context,
 	app Application,
 	j job.Job,
-) error {
+) (SubmissionResult, error) {
 	f.submissions++
-	return f.err
+
+	if f.err != nil {
+		if f.result != "" {
+			return f.result, f.err
+		}
+
+		return SubmissionFailed, f.err
+	}
+
+	if f.result != "" {
+		return f.result, nil
+	}
+
+	return SubmissionSucceeded, nil
 }
 
 type fakeJobRepository struct {
@@ -445,6 +459,133 @@ func TestApplicationSubmissionRollsBackLocalChanges(t *testing.T) {
 
 	if !finalTx.rolledBack {
 		t.Fatal("failed final transaction was not rolled back")
+	}
+}
+
+func TestApplicationSubmissionAmbiguousLeavesApplicationInProgress(
+	t *testing.T,
+) {
+	applications, jobs := newSubmissionFixture()
+	events := &fakeEventRepository{}
+
+	submitter := &fakeApplicationSubmitter{
+		result: SubmissionAmbiguous,
+		err:    errors.New("network timeout after remote acceptance"),
+	}
+
+	startTx := &fakeSubmissionTransaction{}
+	factory := &fakeSubmissionTransactionFactory{
+		transactions: []*fakeSubmissionTransaction{
+			startTx,
+		},
+	}
+
+	service := NewApplicationSubmissionService(
+		applications,
+		jobs,
+		events,
+		submitter,
+	)
+	service.SetTransactionFactory(factory)
+
+	err := service.Submit(context.Background(), 100)
+	if err == nil {
+		t.Fatal("expected ambiguous submission error")
+	}
+
+	if submitter.submissions != 1 {
+		t.Fatalf(
+			"submissions = %d, want 1",
+			submitter.submissions,
+		)
+	}
+
+	if len(events.events) != 0 {
+		t.Fatalf(
+			"events = %d, want 0 for fake repository",
+			len(events.events),
+		)
+	}
+
+	if startTx.applicationStatus != StatusSubmissionInProgress {
+		t.Fatalf(
+			"transaction application status = %q, want %q",
+			startTx.applicationStatus,
+			StatusSubmissionInProgress,
+		)
+	}
+
+	if !startTx.committed {
+		t.Fatal("submission-start transaction was not committed")
+	}
+
+	if startTx.rolledBack {
+		t.Fatal("submission-start transaction was rolled back")
+	}
+}
+
+func TestApplicationSubmissionRejectsRetryAfterAmbiguousAttempt(
+	t *testing.T,
+) {
+	applications, jobs := newSubmissionFixture()
+	events := &fakeEventRepository{}
+
+	submitter := &fakeApplicationSubmitter{
+		result: SubmissionAmbiguous,
+		err:    errors.New("remote outcome unknown"),
+	}
+
+	startTx := &fakeSubmissionTransaction{}
+	factory := &fakeSubmissionTransactionFactory{
+		transactions: []*fakeSubmissionTransaction{
+			startTx,
+		},
+	}
+
+	service := NewApplicationSubmissionService(
+		applications,
+		jobs,
+		events,
+		submitter,
+	)
+	service.SetTransactionFactory(factory)
+
+	firstErr := service.Submit(
+		context.Background(),
+		100,
+	)
+	if firstErr == nil {
+		t.Fatal("first submission should be ambiguous")
+	}
+
+	secondErr := service.Submit(
+		context.Background(),
+		100,
+	)
+	if secondErr == nil {
+		t.Fatal("retry after ambiguous submission should be rejected")
+	}
+
+	if submitter.submissions != 1 {
+		t.Fatalf(
+			"submissions = %d, want 1; ambiguous retry must not resubmit",
+			submitter.submissions,
+		)
+	}
+
+	if factory.index != 1 {
+		t.Fatalf(
+			"transaction factory index = %d, want 1; retry must not start another transaction",
+			factory.index,
+		)
+	}
+
+	if startTx.applicationStatus != StatusSubmissionInProgress {
+		t.Fatalf(
+			"submission transaction application status = %q, want %q",
+			startTx.applicationStatus,
+			StatusSubmissionInProgress,
+		)
 	}
 }
 

@@ -8,12 +8,20 @@ import (
 	"jobclaw/internal/job"
 )
 
+type SubmissionResult string
+
+const (
+	SubmissionSucceeded SubmissionResult = "SUCCEEDED"
+	SubmissionFailed    SubmissionResult = "FAILED"
+	SubmissionAmbiguous SubmissionResult = "AMBIGUOUS"
+)
+
 type ApplicationSubmitter interface {
 	Submit(
 		ctx context.Context,
 		app Application,
 		j job.Job,
-	) error
+	) (SubmissionResult, error)
 }
 
 type ApplicationSubmissionService struct {
@@ -163,59 +171,112 @@ func (s *ApplicationSubmissionService) Submit(
 	// require reconciliation instead of blindly submitting again.
 	// We cannot roll back an external submission, so only update local
 	// state after the external system confirms success.
-	if err := s.submitter.Submit(ctx, *app, *j); err != nil {
-		// The external submitter returned a definitive failure, so this
-		// attempt did not cross the successful submission boundary.
-		// Move the application back to READY_TO_APPLY and record the failure.
-		tx, txErr := beginSubmissionTransaction(ctx, s.transactions)
+	result, submitErr := s.submitter.Submit(ctx, *app, *j)
+
+	if result == SubmissionAmbiguous {
+		return fmt.Errorf(
+			"submission attempt %s is ambiguous; reconciliation is required",
+			attemptID,
+		)
+	}
+
+	if result == SubmissionFailed {
+		if submitErr == nil {
+			submitErr = fmt.Errorf("external submission failed")
+		}
+
+		// A definitive external failure means the application can safely
+		// return to READY_TO_APPLY. Keep the state transition and failure
+		// event in one local transaction.
+		if s.transactions == nil {
+			if s.events != nil {
+				_ = s.events.Create(ctx, Event{
+					ApplicationID: applicationID,
+					Type:          EventApplicationSubmissionFailed,
+					Metadata: fmt.Sprintf(
+						"attempt_id=%s error=%s",
+						attemptID,
+						submitErr.Error(),
+					),
+				})
+			}
+
+			return fmt.Errorf("submit application: %w", submitErr)
+		}
+
+		failureTx, txErr := beginSubmissionTransaction(
+			ctx,
+			s.transactions,
+		)
 		if txErr != nil {
 			return fmt.Errorf(
 				"submit application: %w; restore submission state: %v",
-				err,
+				submitErr,
 				txErr,
 			)
 		}
 
-		if txErr := tx.UpdateApplicationStatus(
+		failureCommitted := false
+		defer func() {
+			if !failureCommitted {
+				_ = failureTx.Rollback()
+			}
+		}()
+
+		if txErr := failureTx.UpdateApplicationStatus(
 			ctx,
 			applicationID,
 			StatusReadyToApply,
 		); txErr != nil {
-			_ = tx.Rollback()
 			return fmt.Errorf(
 				"submit application: %w; restore submission state: %v",
-				err,
+				submitErr,
 				txErr,
 			)
 		}
 
-		if txErr := tx.CreateEvent(ctx, Event{
+		if txErr := failureTx.CreateEvent(ctx, Event{
 			ApplicationID: applicationID,
 			Type:          EventApplicationSubmissionFailed,
 			Metadata: fmt.Sprintf(
 				"attempt_id=%s error=%s",
 				attemptID,
-				err.Error(),
+				submitErr.Error(),
 			),
 		}); txErr != nil {
-			_ = tx.Rollback()
 			return fmt.Errorf(
-				"submit application: %w; record failure: %v",
-				err,
+				"submit application: %w; record submission failure: %v",
+				submitErr,
 				txErr,
 			)
 		}
 
-		if txErr := tx.Commit(); txErr != nil {
-			_ = tx.Rollback()
+		if txErr := failureTx.Commit(); txErr != nil {
 			return fmt.Errorf(
 				"submit application: %w; commit failure state: %v",
-				err,
+				submitErr,
 				txErr,
 			)
 		}
 
-		return fmt.Errorf("submit application: %w", err)
+		failureCommitted = true
+
+		return fmt.Errorf("submit application: %w", submitErr)
+	}
+
+	if result != SubmissionSucceeded {
+		if submitErr != nil {
+			return fmt.Errorf(
+				"submit application: unexpected submission result %q: %w",
+				result,
+				submitErr,
+			)
+		}
+
+		return fmt.Errorf(
+			"submit application: unexpected submission result %q",
+			result,
+		)
 	}
 
 	tx, err = beginSubmissionTransaction(ctx, s.transactions)

@@ -18,9 +18,14 @@ func (s *sqliteIntegrationSubmitter) Submit(
 	ctx context.Context,
 	app Application,
 	j job.Job,
-) error {
+) (SubmissionResult, error) {
 	s.submissions++
-	return s.err
+
+	if s.err != nil {
+		return SubmissionFailed, s.err
+	}
+
+	return SubmissionSucceeded, nil
 }
 
 func setupSubmissionIntegrationDB(t *testing.T) *database.DB {
