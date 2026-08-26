@@ -268,3 +268,31 @@ cheap because they train on inputs, which the ZDR constraint excludes anyway.
 The larger cost lever is prompt size, not model choice: the full job description
 is sent, and input is roughly 60% of each resume's cost. Trimming it would save
 more than any model swap, with no quality risk.
+
+### Prompt cost: what worked and what did not
+
+Job descriptions are stored as **escaped HTML**, so a single `<` occupies `&lt;`
+and a non-breaking space eleven characters. `NormalizeJobDescription` unescapes
+twice, strips tags, and collapses whitespace. That is a pure saving of roughly
+13%: no information is lost and the model gets a cleaner prompt. It is always
+applied.
+
+`TrimJobDescription` additionally drops employer boilerplate sections ("About
+Stripe", "Who we are", benefits, EEO). It is implemented and tested but **not used
+for resume prompts**, for two measured reasons:
+
+- **The saving is negligible.** Against `gemini-2.5-flash` it cuts about $0.0003
+  per resume, roughly $0.10 a month. Output tokens are 72% of the cost, so input
+  trimming barely moves the total. The earlier claim that input was 60% of cost
+  was true only at claude-sonnet-4.5's $15/M output pricing; switching model
+  invalidated it.
+- **It measurably reduced keyword density.** Regenerating job 473 with boilerplate
+  dropped produced Go 3 times against 5 in the master, Kafka 2 against 3, Redis 3
+  against 4. Restoring full context brought every count back to parity. For a
+  document screened by ATS keyword matching, that is the wrong trade for $0.10.
+
+`capJobDescription` bounds pathological descriptions at 6000 characters, cutting
+on a paragraph boundary so a requirement is never severed.
+
+The remaining cost lever is **output** tokens, not input. Shorter resumes would be
+cheaper, but resume length is a quality decision, not a cost one.
