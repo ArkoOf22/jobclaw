@@ -3,8 +3,10 @@ package application
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"jobclaw/internal/job"
@@ -14,25 +16,113 @@ func TestGreenhouseSubmissionAdapterSubmitsPreparedData(t *testing.T) {
 	server := httptest.NewServer(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodPost {
-				t.Fatalf("method = %s, want POST", r.Method)
-			}
-
-			if r.URL.Path != "/submit" {
-				t.Fatalf("path = %s, want /submit", r.URL.Path)
-			}
-
-			if got := r.Header.Get("Content-Type"); got != "application/json" {
 				t.Fatalf(
-					"content type = %q, want application/json",
+					"method = %s, want POST",
+					r.Method,
+				)
+			}
+
+			if r.URL.Path != "/boards/acme/jobs/12345" {
+				t.Fatalf(
+					"path = %s, want /boards/acme/jobs/12345",
+					r.URL.Path,
+				)
+			}
+
+			username, password, ok := r.BasicAuth()
+
+			if !ok {
+				t.Fatal("expected Basic Auth")
+			}
+
+			if username != "test-api-key" {
+				t.Fatalf(
+					"username = %q, want test-api-key",
+					username,
+				)
+			}
+
+			if password != "" {
+				t.Fatalf(
+					"password = %q, want empty",
+					password,
+				)
+			}
+
+			contentType := r.Header.Get(
+				"Content-Type",
+			)
+
+			if !strings.HasPrefix(
+				contentType,
+				"multipart/form-data;",
+			) {
+				t.Fatalf(
+					"content type = %q, want multipart/form-data",
+					contentType,
+				)
+			}
+
+			if err := r.ParseMultipartForm(
+				10 << 20,
+			); err != nil {
+				t.Fatalf(
+					"parse multipart form: %v",
+					err,
+				)
+			}
+
+			if got := r.FormValue(
+				"question_12345",
+			); got != "1001" {
+				t.Fatalf(
+					"question value = %q, want 1001",
 					got,
 				)
 			}
 
-			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{
-				"success": true,
-				"id": "submission-123"
-			}`)
+			file, header, err := r.FormFile(
+				"resume",
+			)
+			if err != nil {
+				t.Fatalf(
+					"get resume file: %v",
+					err,
+				)
+			}
+			defer file.Close()
+
+			if header.Filename != "resume.pdf" {
+				t.Fatalf(
+					"filename = %q, want resume.pdf",
+					header.Filename,
+				)
+			}
+
+			resume, err := io.ReadAll(file)
+			if err != nil {
+				t.Fatalf(
+					"read resume: %v",
+					err,
+				)
+			}
+
+			if string(resume) != "test resume" {
+				t.Fatalf(
+					"resume = %q, want test resume",
+					string(resume),
+				)
+			}
+
+			w.Header().Set(
+				"Content-Type",
+				"application/json",
+			)
+
+			fmt.Fprint(
+				w,
+				`{"id":"application-123"}`,
+			)
 		}),
 	)
 	defer server.Close()
@@ -42,24 +132,67 @@ func TestGreenhouseSubmissionAdapterSubmitsPreparedData(t *testing.T) {
 		server.URL,
 	)
 
+	adapter.SetAPIKey(
+		"test-api-key",
+	)
+
+	provider, err := NewStaticGreenhouseFormProvider(
+		GreenhouseApplicationForm{
+			JobID: "12345",
+			Fields: []GreenhouseFormField{
+				{
+					ID:       "field-1",
+					Name:     "question_12345",
+					Required: true,
+					Options: []GreenhouseFormOption{
+						{
+							Value: "1001",
+							Label: "Yes",
+						},
+						{
+							Value: "1002",
+							Label: "No",
+						},
+					},
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf(
+			"new form provider: %v",
+			err,
+		)
+	}
+
+	adapter.SetFormProvider(
+		provider,
+	)
+
 	result, err := adapter.Submit(
 		context.Background(),
 		SubmissionRequest{
-			Application: Application{ID: 100, JobID: 10},
+			Application: Application{
+				ID:    100,
+				JobID: 10,
+			},
 			Job: job.Job{
 				ID:         10,
 				Source:     "greenhouse",
-				ExternalID: "gh-123",
+				ExternalID: "12345",
+				URL:        "https://job-boards.greenhouse.io/acme/jobs/12345",
 			},
 			Target: SubmissionTarget{
 				Type:       SubmissionTargetGreenhouse,
-				ExternalID: "gh-123",
+				ExternalID: "12345",
 			},
 			Prepared: PreparedSubmission{
-				Resume: []byte("test resume"),
+				Resume: []byte(
+					"test resume",
+				),
 				Answers: []ResolvedSubmissionAnswer{
 					{
-						FieldKey: "work_authorization",
+						FieldKey: "question_12345",
 						Question: "Are you authorized to work?",
 						Answer:   "Yes",
 					},
@@ -69,7 +202,10 @@ func TestGreenhouseSubmissionAdapterSubmitsPreparedData(t *testing.T) {
 	)
 
 	if err != nil {
-		t.Fatalf("submit: %v", err)
+		t.Fatalf(
+			"submit: %v",
+			err,
+		)
 	}
 
 	if result != SubmissionSucceeded {
@@ -81,7 +217,67 @@ func TestGreenhouseSubmissionAdapterSubmitsPreparedData(t *testing.T) {
 	}
 }
 
-func TestGreenhouseSubmissionAdapterRejectsHTTPFailure(t *testing.T) {
+func TestGreenhouseSubmissionAdapterRejectsMissingAPIKey(
+	t *testing.T,
+) {
+	adapter := NewGreenhouseSubmissionAdapter(
+		&http.Client{},
+		"http://example.com",
+	)
+
+	provider, err := NewStaticGreenhouseFormProvider(
+		GreenhouseApplicationForm{
+			JobID: "12345",
+		},
+	)
+	if err != nil {
+		t.Fatalf(
+			"create form provider: %v",
+			err,
+		)
+	}
+
+	adapter.SetFormProvider(
+		provider,
+	)
+
+	result, err := adapter.Submit(
+		context.Background(),
+		SubmissionRequest{
+			Job: job.Job{
+				URL:        "https://job-boards.greenhouse.io/acme/jobs/12345",
+				ExternalID: "12345",
+			},
+			Target: SubmissionTarget{
+				Type:       SubmissionTargetGreenhouse,
+				ExternalID: "12345",
+			},
+			Prepared: PreparedSubmission{
+				Resume: []byte(
+					"resume",
+				),
+			},
+		},
+	)
+
+	if result != SubmissionFailed {
+		t.Fatalf(
+			"result = %q, want %q",
+			result,
+			SubmissionFailed,
+		)
+	}
+
+	if err == nil {
+		t.Fatal(
+			"expected missing API key error",
+		)
+	}
+}
+
+func TestGreenhouseSubmissionAdapterRejectsHTTPFailure(
+	t *testing.T,
+) {
 	server := httptest.NewServer(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.Error(
@@ -98,15 +294,40 @@ func TestGreenhouseSubmissionAdapterRejectsHTTPFailure(t *testing.T) {
 		server.URL,
 	)
 
+	adapter.SetAPIKey(
+		"test-api-key",
+	)
+
+	provider, err := NewStaticGreenhouseFormProvider(
+		GreenhouseApplicationForm{
+			JobID: "12345",
+		},
+	)
+	if err != nil {
+		t.Fatalf(
+			"create form provider: %v",
+			err,
+		)
+	}
+
+	adapter.SetFormProvider(
+		provider,
+	)
+
 	result, err := adapter.Submit(
 		context.Background(),
 		SubmissionRequest{
+			Job: job.Job{
+				URL: "https://job-boards.greenhouse.io/acme/jobs/12345",
+			},
 			Target: SubmissionTarget{
 				Type:       SubmissionTargetGreenhouse,
-				ExternalID: "gh-123",
+				ExternalID: "12345",
 			},
 			Prepared: PreparedSubmission{
-				Resume: []byte("resume"),
+				Resume: []byte(
+					"resume",
+				),
 			},
 		},
 	)
@@ -120,38 +341,97 @@ func TestGreenhouseSubmissionAdapterRejectsHTTPFailure(t *testing.T) {
 	}
 
 	if err == nil {
-		t.Fatal("expected HTTP failure")
+		t.Fatal(
+			"expected HTTP failure",
+		)
 	}
 }
 
-func TestGreenhouseSubmissionAdapterNetworkFailureIsAmbiguous(t *testing.T) {
+type greenhouseFailingRoundTripper struct{}
+
+func (greenhouseFailingRoundTripper) RoundTrip(
+	*http.Request,
+) (*http.Response, error) {
+	return nil, fmt.Errorf("simulated network failure")
+}
+
+func TestGreenhouseSubmissionAdapterNetworkFailureIsAmbiguous(
+	t *testing.T,
+) {
 	adapter := NewGreenhouseSubmissionAdapter(
-		&http.Client{},
-		"http://127.0.0.1:1",
+		&http.Client{
+			Transport: greenhouseFailingRoundTripper{},
+		},
+		"http://greenhouse.test",
+	)
+
+	adapter.SetAPIKey(
+		"test-api-key",
+	)
+
+	provider, err := NewStaticGreenhouseFormProvider(
+		GreenhouseApplicationForm{
+			JobID: "12345",
+			Fields: []GreenhouseFormField{
+				{
+					ID:       "field-1",
+					Name:     "question_12345",
+					Label:    "Authorization",
+					Type:     "input_text",
+					Required: true,
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf(
+			"create form provider: %v",
+			err,
+		)
+	}
+
+	adapter.SetFormProvider(
+		provider,
 	)
 
 	result, err := adapter.Submit(
 		context.Background(),
 		SubmissionRequest{
+			Job: job.Job{
+				URL:        "https://job-boards.greenhouse.io/acme/jobs/12345",
+				ExternalID: "12345",
+			},
 			Target: SubmissionTarget{
 				Type:       SubmissionTargetGreenhouse,
-				ExternalID: "gh-123",
+				ExternalID: "12345",
 			},
 			Prepared: PreparedSubmission{
-				Resume: []byte("resume"),
+				Resume: []byte(
+					"resume",
+				),
+				Answers: []ResolvedSubmissionAnswer{
+					{
+						FieldKey: "question_12345",
+						Question: "Authorization",
+						Answer:   "Yes",
+					},
+				},
 			},
 		},
 	)
 
 	if result != SubmissionAmbiguous {
 		t.Fatalf(
-			"result = %q, want %q",
+			"result = %q, want %q, err = %v",
 			result,
 			SubmissionAmbiguous,
+			err,
 		)
 	}
 
 	if err == nil {
-		t.Fatal("expected network error")
+		t.Fatal(
+			"expected network error",
+		)
 	}
 }

@@ -12,3 +12,8 @@ coverage.out
 
 # Runtime JobClaw data
 data/
+
+# Local NotebookLM knowledge-base artifacts
+notebooklm/
+notebooklm-upload/
+notebooklm-upload.tar.gz

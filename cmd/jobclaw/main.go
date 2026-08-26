@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"jobclaw/internal/application"
@@ -14,6 +16,7 @@ import (
 	"jobclaw/internal/config"
 	"jobclaw/internal/database"
 	"jobclaw/internal/discovery"
+	"jobclaw/internal/discovery/greenhouse"
 	"jobclaw/internal/discovery/jobspy"
 	"jobclaw/internal/job"
 	"jobclaw/internal/llm/openrouter"
@@ -278,9 +281,28 @@ func runDiscover(
 
 	jobSpyClient := jobspy.NewClient(jobSpyURL)
 
+	greenhouseBoards := strings.FieldsFunc(
+		strings.TrimSpace(os.Getenv("JOBCLAW_GREENHOUSE_BOARDS")),
+		func(r rune) bool {
+			return r == ',' || r == '\n'
+		},
+	)
+
+	sources := []discovery.Source{
+		jobSpyClient,
+	}
+
+	if len(greenhouseBoards) > 0 {
+		greenhouseClient := greenhouse.NewMultiBoardClient(
+			greenhouseBoards,
+		)
+
+		sources = append(sources, greenhouseClient)
+	}
+
 	service := discovery.NewService(
 		repository,
-		jobSpyClient,
+		sources...,
 	)
 
 	keywords := cfg.Candidate.Candidate.TargetRoles.Primary
@@ -516,11 +538,11 @@ func runSubmit(
 	applicationRepo := application.NewSQLiteRepository(db)
 	jobRepo := job.NewSQLiteRepository(db)
 	eventRepo := application.NewSQLiteEventRepository(db)
+	questionRepo := application.NewSQLiteQuestionRepository(db)
+	answerRepo := application.NewSQLiteAnswerRepository(db)
 
 	registry := application.NewStaticSubmissionAdapterRegistry()
 
-	// Until external adapters are implemented, register manual submission
-	// as the available adapter. The registry remains the routing boundary.
 	manualAdapter := application.NewManualSubmissionAdapter()
 	if err := registry.Register(
 		application.SubmissionTargetManual,
@@ -530,8 +552,55 @@ func runSubmit(
 		return
 	}
 
+	if greenhouseBaseURL := strings.TrimSpace(
+		os.Getenv("JOBCLAW_GREENHOUSE_BASE_URL"),
+	); greenhouseBaseURL != "" {
+		httpClient := &http.Client{
+			Timeout: 20 * time.Second,
+		}
+
+		greenhouseAdapter := application.NewGreenhouseSubmissionAdapter(
+			httpClient,
+			greenhouseBaseURL,
+		)
+
+		greenhouseAPIKey := strings.TrimSpace(
+			os.Getenv("JOBCLAW_GREENHOUSE_API_KEY"),
+		)
+
+		if greenhouseAPIKey == "" {
+			fmt.Println(
+				"configure greenhouse submission adapter: JOBCLAW_GREENHOUSE_API_KEY is required",
+			)
+			return
+		}
+
+		greenhouseAdapter.SetAPIKey(
+			greenhouseAPIKey,
+		)
+
+		greenhouseAdapter.SetFormProvider(
+			application.NewGreenhouseHTTPFormProvider(
+				httpClient,
+				greenhouseBaseURL,
+			),
+		)
+
+		if err := registry.Register(
+			application.SubmissionTargetGreenhouse,
+			greenhouseAdapter,
+		); err != nil {
+			fmt.Printf("configure greenhouse submission adapter: %v\n", err)
+			return
+		}
+	}
+
 	submitter := application.NewRegistrySubmissionSubmitter(
 		registry,
+	)
+	submitter.SetDataProvider(
+		questionRepo,
+		application.NewAnswerResolver(answerRepo),
 	)
 
 	transactionFactory := application.NewSQLiteSubmissionTransactionFactory(db)
@@ -1280,4 +1349,25 @@ func runStatusChange(
 	fmt.Printf("Company:   %s\n", current.Company)
 	fmt.Printf("Title:     %s\n", current.Title)
 	fmt.Printf("Status:    %s → %s\n", current.Status, target)
+}
+
+func parseCommaSeparatedEnv(name string) []string {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil
+	}
+
+	parts := strings.Split(raw, ",")
+	values := make([]string, 0, len(parts))
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		values = append(values, part)
+	}
+
+	return values
 }

@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"jobclaw/internal/job"
@@ -33,40 +34,51 @@ func (s *Service) Discover(
 	ctx context.Context,
 	request Request,
 ) []Result {
-	results := make([]Result, 0, len(s.sources))
+	results := make([]Result, len(s.sources))
 
-	for _, source := range s.sources {
-		start := time.Now()
+	var wg sync.WaitGroup
 
-		jobs, err := source.Discover(ctx, request)
+	for i, source := range s.sources {
+		wg.Add(1)
 
-		result := Result{
-			Source:   source.Name(),
-			Duration: time.Since(start),
-		}
+		go func(index int, source Source) {
+			defer wg.Done()
 
-		if err != nil {
-			result.Failed = true
-			result.Error = err
-			results = append(results, result)
-			continue
-		}
+			start := time.Now()
 
-		result.Fetched = len(jobs)
+			jobs, err := source.Discover(ctx, request)
 
-		for _, j := range jobs {
-			if err := s.repository.Upsert(ctx, j); err != nil {
-				result.Failed = true
-				result.Error = fmt.Errorf("store job: %w", err)
-				break
+			result := Result{
+				Source:   source.Name(),
+				Duration: time.Since(start),
 			}
 
-			result.Stored++
-		}
+			if err != nil {
+				result.Failed = true
+				result.Error = err
+				result.Duration = time.Since(start)
+				results[index] = result
+				return
+			}
 
-		result.Duration = time.Since(start)
-		results = append(results, result)
+			result.Fetched = len(jobs)
+
+			for _, candidate := range jobs {
+				if err := s.repository.Upsert(ctx, candidate); err != nil {
+					result.Failed = true
+					result.Error = fmt.Errorf("store job: %w", err)
+					break
+				}
+
+				result.Stored++
+			}
+
+			result.Duration = time.Since(start)
+			results[index] = result
+		}(i, source)
 	}
+
+	wg.Wait()
 
 	return results
 }
