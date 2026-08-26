@@ -93,6 +93,18 @@ func (s *ApplicationSubmissionService) Submit(
 		return fmt.Errorf("application %d not found", applicationID)
 	}
 
+	// Check the ambiguous lock before the generic readiness check. A locked
+	// application also fails "not READY_TO_APPLY", and reporting it that way
+	// hides the only fact that matters: a previous attempt may already have
+	// reached the employer, so this must never look like a benign rejection.
+	if app.Status == StatusSubmissionInProgress {
+		return fmt.Errorf(
+			"application %d has an unresolved submission attempt; reconciliation is required: %w",
+			applicationID,
+			ErrSubmissionAmbiguous,
+		)
+	}
+
 	if app.Status != StatusReadyToApply {
 		return fmt.Errorf(
 			"application %d is not READY_TO_APPLY (status=%s)",
@@ -115,16 +127,6 @@ func (s *ApplicationSubmissionService) Submit(
 			"job %d is not APPROVED (status=%s)",
 			j.ID,
 			j.Status,
-		)
-	}
-
-	// A previous attempt may have already crossed the external-system
-	// boundary. Never blindly retry an ambiguous submission.
-	if app.Status == StatusSubmissionInProgress {
-		return fmt.Errorf(
-			"application %d has an unresolved submission attempt; reconciliation is required: %w",
-			applicationID,
-			ErrSubmissionAmbiguous,
 		)
 	}
 
