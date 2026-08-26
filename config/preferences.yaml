@@ -114,7 +114,10 @@ job_preferences:
       - "Grafana"
 
   job_quality:
-    minimum_score_for_shortlist: 70
+    # Lowered from 70: a 24h sweep produced zero matches at 70 while genuine
+    # near-misses clustered in the low-to-mid 60s (a Google SWE II at 65.6).
+    # Actual noise sits in the 20s-40s, so 65 widens the list without admitting it.
+    minimum_score_for_shortlist: 65
     minimum_score_for_apply: 80
     minimum_score_for_autopilot: 90
 

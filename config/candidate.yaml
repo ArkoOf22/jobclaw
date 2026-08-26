@@ -18,10 +18,24 @@ candidate:
       - "SDE I"
       - "SDE II"
 
+    # Secondary roles are searched alongside primary. Scoring still ranks the
+    # results, so a wider net costs precision nothing.
     secondary:
       - "Software Engineer"
+      - "Software Engineer I"
+      - "Software Engineer II"
+      - "Software Development Engineer II"
       - "Platform Engineer"
       - "Distributed Systems Engineer"
+      - "Backend Developer"
+      - "Backend Software Engineer"
+      # Common at Go-first startups.
+      - "Golang Developer"
+      - "Go Developer"
+      # Used by AI and infra startups for senior individual contributors.
+      - "Member of Technical Staff"
+      # Common at Indian product startups for backend-leaning generalists.
+      - "Product Engineer"
 
   skills:
     languages:

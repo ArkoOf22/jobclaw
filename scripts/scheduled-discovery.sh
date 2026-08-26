@@ -49,13 +49,25 @@ log "discovery starting"
 
 # Discovery must not abort the run: one source failing is expected and is already
 # isolated internally, and scoring should still process whatever landed.
-if ! "${BINARY}" discover; then
+# 72-hour window: wide enough that a quiet day still produces a list, narrow
+# enough to stay current. Overridable for ad-hoc runs.
+if ! "${BINARY}" discover \
+    --hours "${JOBCLAW_DISCOVER_HOURS:-72}" \
+    --limit "${JOBCLAW_DISCOVER_LIMIT:-40}"; then
     log "discovery reported a failure; continuing to scoring"
 fi
 
 log "scoring starting"
 
 "${BINARY}" score
+
+log "syncing sheet"
+
+# Sheet sync is best-effort: a Google API hiccup should not fail the run, and
+# unsynced rows stay eligible for the next pass.
+if ! "${BINARY}" sheet sync; then
+    log "sheet sync failed; rows remain queued for the next run"
+fi
 
 log "run complete"
 

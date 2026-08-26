@@ -477,7 +477,23 @@ func runDiscover(
 		sources...,
 	)
 
-	keywords := cfg.Candidate.Candidate.TargetRoles.Primary
+	// Search on both primary and secondary target roles.
+	//
+	// Only primary was used before, so every role listed under secondary was
+	// configured and silently ignored. That is why titles like "Software
+	// Engineer II" were only ever matched incidentally: "Software Engineer" sits
+	// in secondary. Scoring still ranks results, so widening the net here costs
+	// nothing in precision.
+	keywords := append(
+		[]string{},
+		cfg.Candidate.Candidate.TargetRoles.Primary...,
+	)
+
+	keywords = append(
+		keywords,
+		cfg.Candidate.Candidate.TargetRoles.Secondary...,
+	)
+
 	if len(keywords) == 0 {
 		keywords = []string{"Backend Engineer", "Golang"}
 	}
