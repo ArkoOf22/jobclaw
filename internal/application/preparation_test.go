@@ -87,26 +87,93 @@ func TestApplicationPreparationMarksReadyApplication(
 		)
 	}
 
-	if len(events.events) != 2 {
+	// The question already carried an answer, so resolution skips it and emits
+	// no QUESTION_ANSWERED event. Re-announcing an existing answer on every
+	// prepare would be noise, and re-resolving it used to wipe it.
+	if len(events.events) != 1 {
 		t.Fatalf(
-			"events = %d, want 2",
+			"events = %d, want 1; got %+v",
 			len(events.events),
+			events.events,
 		)
 	}
 
-	if events.events[0].Type != EventQuestionAnswered {
+	if events.events[0].Type != EventApplicationReady {
 		t.Fatalf(
 			"event[0] = %q, want %q",
 			events.events[0].Type,
-			EventQuestionAnswered,
+			EventApplicationReady,
+		)
+	}
+}
+
+// Preparation must not overwrite an existing answer. Re-resolving with only the
+// verified answer bank downgrades anything it cannot cover to NEEDS_REVIEW,
+// which previously erased every answer a questionnaire run had produced.
+func TestApplicationPreparationPreservesExistingAnswers(t *testing.T) {
+	applications := &fakeApplicationRepository{
+		applications: map[int64]*Application{
+			100: {
+				ID:                 100,
+				JobID:              10,
+				Status:             StatusDraft,
+				TailoredResumePath: writeReadinessArtifact(t, "resume.txt"),
+			},
+		},
+	}
+
+	questions := &fakeQuestionRepository{
+		questions: []ApplicationQuestion{
+			{
+				ID:            1,
+				ApplicationID: 100,
+				Question:      "Why this company?",
+				Status:        QuestionAnswered,
+				Answer:        "Generated rationale",
+				AnswerSource:  AnswerSourceLLM,
+			},
+		},
+	}
+
+	events := &fakeEventRepository{}
+
+	// An empty answer bank: the resolver cannot cover this question at all.
+	service := NewApplicationPreparationService(
+		applications,
+		questions,
+		events,
+		NewQuestionnaireService(
+			questions,
+			NewAnswerResolver(&fakeAnswerRepository{
+				answers: map[string]*CandidateAnswer{},
+			}),
+			nil,
+			"",
+			events,
+		),
+	)
+
+	if _, err := service.Prepare(
+		context.Background(),
+		100,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	stored := questions.questions[0]
+
+	if stored.Answer != "Generated rationale" {
+		t.Fatalf(
+			"answer = %q, want it preserved",
+			stored.Answer,
 		)
 	}
 
-	if events.events[1].Type != EventApplicationReady {
+	if stored.Status != QuestionAnswered {
 		t.Fatalf(
-			"event[1] = %q, want %q",
-			events.events[1].Type,
-			EventApplicationReady,
+			"status = %q, want %q",
+			stored.Status,
+			QuestionAnswered,
 		)
 	}
 }
