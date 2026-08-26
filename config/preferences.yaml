@@ -131,10 +131,10 @@ job_preferences:
       - "Grafana"
 
   job_quality:
-    # Lowered from 70: a 24h sweep produced zero matches at 70 while genuine
-    # near-misses clustered in the low-to-mid 60s (a Google SWE II at 65.6).
-    # Actual noise sits in the 20s-40s, so 65 widens the list without admitting it.
-    minimum_score_for_shortlist: 65
+    # Lowered from 70 → 65 → 60: a fresh-start 24h sweep produced only 4 matches at 65,
+    # while genuine near-misses (AiPrise, Nokia, HireQuotient, Blue Yonder) clustered
+    # in the low 60s. Noise lives in the 20s-40s, so 60 widens without admitting trash.
+    minimum_score_for_shortlist: 60
     minimum_score_for_apply: 80
     minimum_score_for_autopilot: 90
 
