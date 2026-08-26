@@ -173,7 +173,49 @@ func main() {
 			return
 
 		case "discover":
-			runDiscover(databasePath, cfg, db)
+			// Defaults match the previous hardcoded values so scheduled runs
+			// behave identically unless asked otherwise.
+			hoursOld := 168
+			limit := 10
+
+			args := os.Args[2:]
+
+			for len(args) > 0 {
+				if len(args) < 2 {
+					log.Fatalf(
+						"%s requires a value; usage: jobclaw discover [--hours <n>] [--limit <n>]",
+						args[0],
+					)
+				}
+
+				value, err := strconv.Atoi(args[1])
+				if err != nil || value < 1 {
+					log.Fatalf(
+						"%s must be a positive integer, got %q",
+						args[0],
+						args[1],
+					)
+				}
+
+				switch args[0] {
+				case "--hours":
+					hoursOld = value
+
+				case "--limit":
+					// Per source, not in total.
+					limit = value
+
+				default:
+					log.Fatalf(
+						"unknown argument %q; usage: jobclaw discover [--hours <n>] [--limit <n>]",
+						args[0],
+					)
+				}
+
+				args = args[2:]
+			}
+
+			runDiscover(databasePath, hoursOld, limit, cfg, db)
 			return
 		case "jobs":
 			if len(os.Args) > 2 && os.Args[2] == "list" {
@@ -394,6 +436,8 @@ func main() {
 
 func runDiscover(
 	databasePath string,
+	hoursOld int,
+	limit int,
 	cfg *config.Config,
 	db *database.DB,
 ) {
@@ -447,14 +491,16 @@ func runDiscover(
 		Keywords:   keywords,
 		Locations:  locations,
 		RemoteOnly: false,
-		HoursOld:   168,
-		Limit:      10,
+		HoursOld:   hoursOld,
+		Limit:      limit,
 	})
 
 	fmt.Println("JobClaw Discovery")
 	fmt.Println("────────────────────────────")
 	fmt.Println("Candidate:", cfg.Candidate.Candidate.Name)
 	fmt.Println("Database:", databasePath)
+	fmt.Printf("Window:    posted within %dh\n", hoursOld)
+	fmt.Printf("Limit:     %d per source\n", limit)
 	fmt.Println()
 
 	for _, result := range results {
