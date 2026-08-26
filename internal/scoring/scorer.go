@@ -175,8 +175,19 @@ func (s *Scorer) Score(
 		recommendation = RecommendationShortlist
 	}
 
+	// Veto only on a positive determination that this is a services company.
+	//
+	// Vetoing on anything that is not PRODUCT also rejected UNKNOWN, and UNKNOWN
+	// is the norm rather than the exception: classification is derived from the
+	// job descriptions stored for a company, and most companies contribute a
+	// single posting. A genuine 71.2-scoring backend role was being silently
+	// skipped purely because one description carried too little evidence.
+	//
+	// This also keeps the policy consistent with normalization, which already
+	// excludes an unclassified company instead of penalizing it. Absence of
+	// evidence is not evidence against.
 	if s.preferences.CompanyType.RequireProductCompany &&
-		c.Classification != company.ClassificationProduct {
+		c.Classification == company.ClassificationServices {
 		recommendation = RecommendationSkip
 	}
 
