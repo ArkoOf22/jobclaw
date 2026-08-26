@@ -119,3 +119,38 @@ Note: `.env.example` is currently empty and does not document any of the above.
 `config/candidate.yaml`, `config/preferences.yaml`, `config/resume.yaml`. The resume config is where
 tailoring boundaries live — which transformations are permitted (rewording, reordering, skill
 selection) and which are forbidden (metric changes, invented experience).
+
+### Machine-readable state
+
+```bash
+jobclaw status          # human summary
+jobclaw status --json   # stable contract for orchestrators
+```
+
+`status --json` is the interface an orchestrator such as OpenClaw should use.
+Field names are snake_case and the shape is additive-only: new fields may appear,
+existing ones will not change meaning. It reports job counts by status and
+recommendation, application counts, the jobs awaiting a human approval decision,
+and the applications that cannot progress alone, each with the next command.
+
+Applications with an unresolved submission attempt appear with an empty
+`next_command`, because they must never be retried automatically.
+
+Note `jobs list` shows only the first 20 rows. Use `status` for real totals.
+
+### Scheduled discovery
+
+`jobclaw-discover.timer` runs discovery then scoring every six hours
+(00/06/12/18 IST, randomized up to 20 minutes, `Persistent=true` so a missed
+window catches up after downtime). It deliberately stops at scoring: approval is a
+human gate, so nothing past it happens unattended.
+
+```bash
+sudo systemctl list-timers jobclaw-discover.timer
+sudo systemctl start jobclaw-discover.service   # run one pass now
+journalctl -u jobclaw-discover -n 50
+```
+
+Units are version-controlled in `deploy/`; the wrapper is
+`scripts/scheduled-discovery.sh`, which rebuilds `bin/jobclaw` when any source
+file is newer so a deploy cannot silently keep running stale code.
