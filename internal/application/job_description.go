@@ -143,8 +143,13 @@ func TrimJobDescription(text string, maxChars int) string {
 
 		switch {
 		case isBoilerplate(trimmed):
-			// Boilerplate heading, or a paragraph opening with one.
-			skipping = heading
+			// Drop it either way, but only a heading opens a suppressed
+			// section. Assigning `skipping = heading` here would let a
+			// boilerplate body paragraph such as "Our mission is ..." clear the
+			// flag and un-suppress the rest of the section it belongs to.
+			if heading {
+				skipping = true
+			}
 
 			continue
 
