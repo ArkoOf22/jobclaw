@@ -21,10 +21,10 @@ type ResumeGeneration struct {
 }
 
 type ResumeLLMConfig struct {
-	Provider  string `yaml:"provider"`
-	Model     string `yaml:"model"`
-	BaseURL   string `yaml:"base_url"`
-	APIKeyEnv string `yaml:"api_key_env"`
+	Provider  string           `yaml:"provider"`
+	Model     string           `yaml:"model"`
+	BaseURL   string           `yaml:"base_url"`
+	APIKeyEnv string           `yaml:"api_key_env"`
 	Privacy   ResumeLLMPrivacy `yaml:"privacy"`
 }
 
