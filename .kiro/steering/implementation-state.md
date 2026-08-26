@@ -186,6 +186,86 @@ Not a blocker for the slice: approval is a manual human gate and
 `SCORED -> APPROVED` is a legal transition, so a SKIP recommendation is advice
 rather than a wall.
 
+### Greenhouse: automated submission is not available to applicants
+
+Per the [Job Board API docs](https://docs.greenhouse.io/job-board.html), only the
+POST submission endpoint requires auth. **Every GET is public**, including a job's
+application questions. Verified against Stripe's live board with no credentials:
+`GET /v1/boards/stripe/jobs/6042172?questions=true` returns 200 with 16 questions.
+
+So `JOBCLAW_GREENHOUSE_BASE_URL` needs no secret and now defaults to
+`https://boards-api.greenhouse.io/v1`.
+
+`JOBCLAW_GREENHOUSE_API_KEY` is a **Job Board API Key issued by the employer** from
+their own Greenhouse settings. An applicant cannot obtain one for a company they do
+not work for. Automated Greenhouse submission is therefore unavailable by design,
+and `MANUAL` is the realistic terminal adapter. The remaining honest options are a
+prepared payload plus manual submission, or browser automation against the public
+form, which is fragile and ToS-sensitive.
+
+`runSubmit` now registers the Greenhouse adapter only when an API key is present.
+Gating on the base URL used to abort the whole command, including the dry run,
+whenever a URL was set without a key.
+
+### The form-to-questionnaire bridge was missing
+
+The HTTP form provider and the questionnaire ingestor both existed and were
+tested, but nothing connected them. The provider was wired solely into the
+submission adapter, the one path needing the impossible API key, so questions
+could only be ingested from a hand-written local text file.
+
+Added `GreenhouseFormToQuestionnaireInputs` plus
+`jobclaw questionnaire <id> --from-greenhouse`. Artifact-backed fields (`resume`,
+`resume_text`, `cover_letter`, `cover_letter_text`) and `input_file` types are
+skipped, since answer resolution can never satisfy them and they would block
+readiness forever. Field metadata retains the original name including any `[]`
+multi-select suffix, plus type, required flag, and option labels.
+
+Board tokens cannot always be derived from the job URL: employers often front
+their board on their own domain, as Stripe does with
+`stripe.com/jobs/search?gh_jid=...`, where the token is absent entirely. Added
+`SetBoardToken` and fall back to `JOBCLAW_GREENHOUSE_BOARDS` when exactly one
+board is configured. **Proper fix, not yet done:** persist the board token on the
+job at discovery time, where it is already known, rather than re-deriving it from
+a display URL. That needs a migration.
+
+### Preparation was erasing answers
+
+`Prepare` unconditionally re-ran answer resolution, and the resolver only knows
+the verified answer bank. Any answer from another source resolved to NEEDS_REVIEW
+and was overwritten with an empty string, so **every `prepare` wiped the answers
+the preceding `questionnaire` run had produced.** Observed live: 7 resolved
+answers reduced to 0.
+
+`ProcessApplication` now skips questions that already carry a non-empty answer,
+the same way it already skipped approved ones. That makes it idempotent, stops
+repeat LLM calls on every invocation, and preserves work. Unverified answers are
+still surfaced by the `answer_provenance` readiness check and in the submission
+dry run, so they get human review before anything is sent.
+
+### Verified end-to-end run
+
+Full slice against a scratch DB with real credentials, live Greenhouse data, and
+real LLM calls:
+
+```
+discover       3 Backend Engineer roles, JobSpy failed in isolation
+score          68.5 / 68.0 / 51.0, classification wired, all SKIP on thresholds
+approve        manual gate, SCORED -> APPROVED
+application    workspace created, 71-line tailored resume generated
+questionnaire  14 questions from Stripe's live form, 7 answered, 7 NEEDS_REVIEW
+prepare        BLOCKED, answers preserved, provenance surfaced
+submit         dry run prints full payload, nothing sent
+```
+
+Resume generation succeeded with `data_collection: deny` and `zdr: true`, so a
+compliant provider was available for the pinned model.
+
+The 7 unresolved questions are Email, Phone, work authorization, visa sponsorship,
+remote intent, WhatsApp opt-in, and US city/state. All require real personal facts,
+and the system correctly refuses to invent them. Supply them with
+`jobclaw answer add <field_key> <answer>` to reach READY_TO_APPLY.
+
 ### Still blocked
 
 `OPENROUTER_API_KEY` is absent, so resume tailoring and LLM answer fallback

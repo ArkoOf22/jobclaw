@@ -79,7 +79,24 @@ up `data/jobclaw.db` or point `JOBCLAW_DB_PATH` at a scratch file when testing.
 
 `resume` and `questionnaire`. `application` no longer requires it: the
 application and workspace are created regardless, and the resume is reported as
-PENDING and retried later with `jobclaw resume <jobID>`.
+PENDING and retried later with `jobclaw resume <jobID>`. `prepare` validates only
+and makes no network calls.
+
+### Questionnaire ingestion
+
+```bash
+jobclaw questionnaire <id> --from-greenhouse   # fetch the live form, no credentials
+jobclaw questionnaire <id> --source <path>     # ingest from a local text file
+jobclaw questionnaire <id>                     # resolve already-ingested questions
+```
+
+`--from-greenhouse` reads Greenhouse's public Job Board API. Only the POST
+submission endpoint requires auth, so `JOBCLAW_GREENHOUSE_BASE_URL` needs no
+secret and defaults to `https://boards-api.greenhouse.io/v1`.
+
+`JOBCLAW_GREENHOUSE_API_KEY` is issued by the **employer** for their own board. An
+applicant cannot obtain one, so automated Greenhouse submission is unavailable and
+`MANUAL` is the realistic terminal adapter.
 
 ## Environment variables
 
