@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"jobclaw/internal/application"
 	"jobclaw/internal/database"
 	"jobclaw/internal/job"
 	"jobclaw/internal/sheet"
@@ -125,7 +126,64 @@ func runMark(
 		fmt.Printf("Status:   %s → %s\n", current.Status, target)
 	}
 
+	if target == job.StatusApplied {
+		syncApplicationApplied(ctx, jobID, db)
+	}
+
 	updateSheetStatus(ctx, jobID, sheet.RowUpdate{Status: sheetStatus})
+}
+
+// syncApplicationApplied advances the application row that belongs to a job the
+// candidate has now applied to.
+//
+// A job can be applied to straight off the sheet, in which case there is no
+// application row and nothing to do. But when one exists it was created by the
+// resume pipeline and still reads READY_TO_APPLY, which contradicts the job it
+// points at. Anything reading application status would report the job as still
+// pending, so the two are kept in step.
+//
+// Best-effort, like the sheet update: the job status change has already
+// committed, and losing it to a follow-up failure would be worse than a stale
+// application row.
+func syncApplicationApplied(
+	ctx context.Context,
+	jobID int64,
+	db *database.DB,
+) {
+	appRepo := application.NewSQLiteRepository(db)
+
+	existing, err := appRepo.GetByJobID(ctx, jobID)
+	if err != nil {
+		fmt.Printf("Applic.:  not updated (%v)\n", err)
+
+		return
+	}
+
+	if existing == nil {
+		return
+	}
+
+	if existing.Status == application.StatusApplied {
+		fmt.Printf("Applic.:  %d already APPLIED\n", existing.ID)
+
+		return
+	}
+
+	if err := appRepo.UpdateStatus(
+		ctx,
+		existing.ID,
+		application.StatusApplied,
+	); err != nil {
+		fmt.Printf("Applic.:  not updated (%v)\n", err)
+
+		return
+	}
+
+	fmt.Printf(
+		"Applic.:  %d %s → APPLIED\n",
+		existing.ID,
+		existing.Status,
+	)
 }
 
 // updateSheetStatus mirrors an outcome onto the sheet.

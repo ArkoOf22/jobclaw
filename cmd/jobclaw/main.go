@@ -1638,8 +1638,8 @@ func runShortlist(db *database.DB) {
 		count++
 
 		fmt.Printf(
-			"#%d  %s — %s\n",
-			count,
+			"[job %d]  %s — %s\n",
+			j.ID,
 			j.Company,
 			j.Title,
 		)
@@ -1660,6 +1660,12 @@ func runShortlist(db *database.DB) {
 
 	fmt.Println("────────────────────────────")
 	fmt.Printf("Shortlisted: %d\n", count)
+
+	if count > 0 {
+		fmt.Println()
+		fmt.Println("Use the [job N] number with other commands, e.g.:")
+		fmt.Println("  jobclaw mark <N> applied     jobclaw mark <N> skipped")
+	}
 }
 
 func runJob(jobID int64, db *database.DB) {
