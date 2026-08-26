@@ -649,14 +649,85 @@ func runApplication(jobID int64, cfg *config.Config, db *database.DB) {
 
 	resumeConfig := cfg.Resume.Resume
 
+	// The resume generator is optional here. Creating the application and its
+	// workspace is a local operation, so it must not require the LLM to be
+	// configured or reachable. When the key is absent the application is still
+	// created and the resume step is reported as pending, retryable with
+	// `jobclaw resume <id>`.
+	var resumeGenerator application.ResumeGenerator
+
 	apiKey := os.Getenv(resumeConfig.LLM.APIKeyEnv)
-	if apiKey == "" {
-		log.Fatalf(
-			"resume LLM API key environment variable %q is not set",
-			resumeConfig.LLM.APIKeyEnv,
+
+	if apiKey != "" {
+		resumeGenerator = buildResumeGenerator(
+			jobRepo,
+			resumeConfig,
+			apiKey,
 		)
 	}
 
+	service := application.NewService(
+		jobRepo,
+		applicationRepo,
+		eventRepo,
+		resumeGenerator,
+	)
+
+	app, err := service.CreateForApprovedJob(ctx, jobID)
+	if err != nil {
+		log.Fatalf("create application: %v", err)
+	}
+
+	fmt.Println("JobClaw Application")
+	fmt.Println("────────────────────────────")
+	fmt.Printf("Application ID: %d\n", app.ID)
+	fmt.Printf("Job ID:         %d\n", app.JobID)
+	fmt.Printf("Status:         %s\n", app.Status)
+	fmt.Println()
+	fmt.Println("Application workspace:")
+	fmt.Printf("data/applications/%d/\n", app.JobID)
+	fmt.Println()
+
+	if apiKey == "" {
+		fmt.Println("Tailored resume: PENDING")
+		fmt.Printf(
+			"  %s is not set, so the resume was not generated.\n",
+			resumeConfig.LLM.APIKeyEnv,
+		)
+		fmt.Printf(
+			"  The application is intact. Retry with: jobclaw resume %d\n",
+			jobID,
+		)
+
+		return
+	}
+
+	resumePath, err := service.EnsureTailoredResume(ctx, jobID)
+	if err != nil {
+		// The application row is already committed and valid. A resume failure
+		// is recoverable, so report it without discarding that work.
+		fmt.Println("Tailored resume: FAILED")
+		fmt.Printf("  %v\n", err)
+		fmt.Printf(
+			"  The application is intact. Retry with: jobclaw resume %d\n",
+			jobID,
+		)
+
+		os.Exit(1)
+	}
+
+	fmt.Println("Tailored resume: OK")
+	fmt.Printf("  %s\n", resumePath)
+}
+
+// buildResumeGenerator assembles the LLM-backed resume generator. Shared by the
+// application, resume, and questionnaire commands, which previously duplicated
+// this wiring three times.
+func buildResumeGenerator(
+	jobRepo *job.SQLiteRepository,
+	resumeConfig config.Resume,
+	apiKey string,
+) application.ResumeGenerator {
 	resumeSource := application.NewResumeSource(
 		application.ResumeSourceConfig{
 			MasterPath:            resumeConfig.MasterPath,
@@ -687,32 +758,11 @@ func runApplication(jobID int64, cfg *config.Config, db *database.DB) {
 		log.Fatalf("initialize resume LLM: %v", err)
 	}
 
-	resumeGenerator := application.NewLLMResumeGenerator(
+	return application.NewLLMResumeGenerator(
 		jobRepo,
 		promptBuilder,
 		llmClient,
 	)
-
-	service := application.NewService(
-		jobRepo,
-		applicationRepo,
-		eventRepo,
-		resumeGenerator,
-	)
-
-	app, err := service.CreateForApprovedJob(ctx, jobID)
-	if err != nil {
-		log.Fatalf("create application: %v", err)
-	}
-
-	fmt.Println("JobClaw Application")
-	fmt.Println("────────────────────────────")
-	fmt.Printf("Application ID: %d\n", app.ID)
-	fmt.Printf("Job ID:         %d\n", app.JobID)
-	fmt.Printf("Status:         %s\n", app.Status)
-	fmt.Println()
-	fmt.Println("Application workspace:")
-	fmt.Printf("data/applications/%d/\n", app.JobID)
 }
 
 func runAnswerAdd(
