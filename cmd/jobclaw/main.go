@@ -1981,10 +1981,13 @@ func buildQuestionAnswerLLM(
 		log.Fatalf("build candidate context: %v", err)
 	}
 
+	// Questionnaire answers are short factual strings, so they use the cheaper
+	// answers model. Privacy constraints are identical: these answers are still
+	// personal data about the candidate.
 	llmClient, err := openrouter.NewClient(
 		openrouter.Config{
 			APIKey:  apiKey,
-			Model:   resumeConfig.LLM.Model,
+			Model:   resumeConfig.LLM.AnswersModelOrDefault(),
 			BaseURL: resumeConfig.LLM.BaseURL,
 			DenyDataCollection: resumeConfig.LLM.Privacy.
 				DenyDataCollection,

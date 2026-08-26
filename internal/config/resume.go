@@ -1,5 +1,7 @@
 package config
 
+import "strings"
+
 type ResumeConfig struct {
 	Resume Resume `yaml:"resume"`
 }
@@ -21,11 +23,30 @@ type ResumeGeneration struct {
 }
 
 type ResumeLLMConfig struct {
-	Provider  string           `yaml:"provider"`
-	Model     string           `yaml:"model"`
-	BaseURL   string           `yaml:"base_url"`
-	APIKeyEnv string           `yaml:"api_key_env"`
-	Privacy   ResumeLLMPrivacy `yaml:"privacy"`
+	Provider  string `yaml:"provider"`
+	Model     string `yaml:"model"`
+	BaseURL   string `yaml:"base_url"`
+	APIKeyEnv string `yaml:"api_key_env"`
+
+	// AnswersModel handles questionnaire answers, which are short factual
+	// strings such as "Yes", "India", or a job title. Resume tailoring writes
+	// prose a recruiter reads and justifies a stronger model; paying the same
+	// rate to emit "Yes" does not.
+	//
+	// Optional. Falls back to Model when unset, so existing configs behave as
+	// before.
+	AnswersModel string `yaml:"answers_model"`
+
+	Privacy ResumeLLMPrivacy `yaml:"privacy"`
+}
+
+// AnswersModelOrDefault returns the model to use for questionnaire answers.
+func (c ResumeLLMConfig) AnswersModelOrDefault() string {
+	if strings.TrimSpace(c.AnswersModel) != "" {
+		return c.AnswersModel
+	}
+
+	return c.Model
 }
 
 // ResumeLLMPrivacy controls how much the upstream provider is permitted to do
