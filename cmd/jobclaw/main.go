@@ -1707,13 +1707,28 @@ func ingestGreenhouseQuestionnaire(
 		baseURL,
 	)
 
-	// Employers commonly host their Greenhouse board on their own domain, where
-	// the board token is absent from the job URL. Fall back to the configured
-	// discovery boards, which is where the token came from originally.
-	if boards := parseCommaSeparatedEnv(
-		"JOBCLAW_GREENHOUSE_BOARDS",
-	); len(boards) == 1 {
-		provider.SetBoardToken(boards[0])
+	// Prefer the token recorded at discovery time. Employers commonly host their
+	// Greenhouse board on their own domain, where the token is absent from the
+	// job URL entirely, so it cannot be re-derived.
+	switch {
+	case j.BoardToken != "":
+		provider.SetBoardToken(j.BoardToken)
+
+	default:
+		// Jobs discovered before the token was persisted have none recorded.
+		// Fall back to the configured discovery boards, but only when there is
+		// exactly one, since more than one is ambiguous.
+		boards := parseCommaSeparatedEnv("JOBCLAW_GREENHOUSE_BOARDS")
+
+		if len(boards) == 1 {
+			provider.SetBoardToken(boards[0])
+
+			fmt.Printf(
+				"note: job %d has no recorded board token; assuming %q from JOBCLAW_GREENHOUSE_BOARDS\n",
+				j.ID,
+				boards[0],
+			)
+		}
 	}
 
 	form, err := provider.GetApplicationForm(ctx, *j)

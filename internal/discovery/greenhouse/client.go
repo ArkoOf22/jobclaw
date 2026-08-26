@@ -110,6 +110,12 @@ func (c *Client) Discover(
 			Description: item.Content,
 			Location:    item.Location.Name,
 			URL:         item.AbsoluteURL,
+
+			// Record the board this job came from. AbsoluteURL often points at
+			// the employer's own domain, where the token is unrecoverable, so
+			// later stages such as fetching the application form depend on it
+			// being persisted here.
+			BoardToken: c.boardToken,
 		}
 
 		if !discovery.MatchesRequest(candidate, request) {

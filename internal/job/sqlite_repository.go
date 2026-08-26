@@ -61,10 +61,12 @@ func (r *SQLiteRepository) Upsert(ctx context.Context, j Job) error {
 			salary_max,
 			currency,
 			url,
-			posted_at
+			posted_at,
+			board_token
 		)
 		SELECT
 			id,
+			?,
 			?,
 			?,
 			?,
@@ -93,7 +95,11 @@ func (r *SQLiteRepository) Upsert(ctx context.Context, j Job) error {
 			salary_max = excluded.salary_max,
 			currency = excluded.currency,
 			url = excluded.url,
-			posted_at = excluded.posted_at
+			posted_at = excluded.posted_at,
+			board_token = COALESCE(
+				NULLIF(excluded.board_token, ''),
+				jobs.board_token
+			)
 	`,
 		j.ExternalID,
 		j.Company,
@@ -108,6 +114,7 @@ func (r *SQLiteRepository) Upsert(ctx context.Context, j Job) error {
 		j.Currency,
 		j.URL,
 		formatTime(j.PostedAt),
+		j.BoardToken,
 		j.Source,
 	)
 
@@ -140,6 +147,7 @@ func (r *SQLiteRepository) GetBySourceExternalID(
 			j.currency,
 			j.url,
 			j.posted_at,
+			j.board_token,
 			j.discovered_at
 		FROM jobs j
 		JOIN job_sources js ON js.id = j.source_id
@@ -156,6 +164,7 @@ func (r *SQLiteRepository) GetBySourceExternalID(
 		employmentType sql.NullString
 		currency       sql.NullString
 		postedAt       sql.NullString
+		boardToken     sql.NullString
 		discoveredAt   sql.NullString
 	)
 
@@ -175,6 +184,7 @@ func (r *SQLiteRepository) GetBySourceExternalID(
 		&currency,
 		&j.URL,
 		&postedAt,
+		&boardToken,
 		&discoveredAt,
 	)
 
@@ -196,6 +206,10 @@ func (r *SQLiteRepository) GetBySourceExternalID(
 
 	if currency.Valid {
 		j.Currency = currency.String
+	}
+
+	if boardToken.Valid {
+		j.BoardToken = boardToken.String
 	}
 
 	if postedAt.Valid && postedAt.String != "" {
@@ -244,6 +258,7 @@ func (r *SQLiteRepository) List(
                         j.currency,
                         j.url,
                         j.posted_at,
+                        j.board_token,
                         j.discovered_at
                 FROM jobs j
                 JOIN job_sources js ON js.id = j.source_id
@@ -264,6 +279,7 @@ func (r *SQLiteRepository) List(
 			employmentType sql.NullString
 			currency       sql.NullString
 			postedAt       sql.NullString
+			boardToken     sql.NullString
 			discoveredAt   sql.NullString
 		)
 
@@ -283,6 +299,7 @@ func (r *SQLiteRepository) List(
 			&currency,
 			&j.URL,
 			&postedAt,
+			&boardToken,
 			&discoveredAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan job: %w", err)
@@ -298,6 +315,10 @@ func (r *SQLiteRepository) List(
 
 		if currency.Valid {
 			j.Currency = currency.String
+		}
+
+		if boardToken.Valid {
+			j.BoardToken = boardToken.String
 		}
 
 		if postedAt.Valid && postedAt.String != "" {
@@ -376,6 +397,7 @@ func (r *SQLiteRepository) GetByID(
 			j.currency,
 			j.url,
 			j.posted_at,
+			j.board_token,
 			j.discovered_at
 		FROM jobs j
 		JOIN job_sources js ON js.id = j.source_id
@@ -388,6 +410,7 @@ func (r *SQLiteRepository) GetByID(
 		employmentType sql.NullString
 		currency       sql.NullString
 		postedAt       sql.NullString
+		boardToken     sql.NullString
 		discoveredAt   sql.NullString
 	)
 
@@ -407,6 +430,7 @@ func (r *SQLiteRepository) GetByID(
 		&currency,
 		&j.URL,
 		&postedAt,
+		&boardToken,
 		&discoveredAt,
 	); err != nil {
 		if err == sql.ErrNoRows {
@@ -426,6 +450,10 @@ func (r *SQLiteRepository) GetByID(
 
 	if currency.Valid {
 		j.Currency = currency.String
+	}
+
+	if boardToken.Valid {
+		j.BoardToken = boardToken.String
 	}
 
 	if postedAt.Valid && postedAt.String != "" {
