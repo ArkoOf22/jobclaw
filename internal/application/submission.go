@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -14,6 +15,17 @@ const (
 	SubmissionSucceeded SubmissionResult = "SUCCEEDED"
 	SubmissionFailed    SubmissionResult = "FAILED"
 	SubmissionAmbiguous SubmissionResult = "AMBIGUOUS"
+)
+
+// ErrSubmissionAmbiguous marks the case where the request may have reached the
+// external system but the outcome could not be confirmed. The application may
+// or may not have been submitted.
+//
+// This must be distinguishable by callers rather than inferred from an error
+// string: reporting an ambiguous outcome as a plain failure invites the operator
+// to resubmit, which is exactly how duplicate applications happen.
+var ErrSubmissionAmbiguous = errors.New(
+	"submission outcome is ambiguous",
 )
 
 type ApplicationSubmitter interface {
@@ -110,8 +122,9 @@ func (s *ApplicationSubmissionService) Submit(
 	// boundary. Never blindly retry an ambiguous submission.
 	if app.Status == StatusSubmissionInProgress {
 		return fmt.Errorf(
-			"application %d has an ambiguous submission attempt; reconciliation is required",
+			"application %d has an unresolved submission attempt; reconciliation is required: %w",
 			applicationID,
+			ErrSubmissionAmbiguous,
 		)
 	}
 
@@ -175,8 +188,9 @@ func (s *ApplicationSubmissionService) Submit(
 
 	if result == SubmissionAmbiguous {
 		return fmt.Errorf(
-			"submission attempt %s is ambiguous; reconciliation is required",
+			"submission attempt %s could not be confirmed; reconciliation is required: %w",
 			attemptID,
+			ErrSubmissionAmbiguous,
 		)
 	}
 

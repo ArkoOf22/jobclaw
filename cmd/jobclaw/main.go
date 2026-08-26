@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -217,8 +218,10 @@ func main() {
 			return
 
 		case "submit":
-			if len(os.Args) != 3 {
-				log.Fatal("usage: jobclaw submit <application_id>")
+			if len(os.Args) < 3 || len(os.Args) > 4 {
+				log.Fatal(
+					"usage: jobclaw submit <application_id> [--confirm]",
+				)
 			}
 
 			applicationID, err := strconv.ParseInt(os.Args[2], 10, 64)
@@ -226,7 +229,22 @@ func main() {
 				log.Fatal("application ID must be a positive integer")
 			}
 
-			runSubmit(applicationID, db)
+			// Submission is irreversible and externally visible, so sending is
+			// opt-in. Without --confirm this previews the payload only.
+			confirmed := false
+
+			if len(os.Args) == 4 {
+				if os.Args[3] != "--confirm" {
+					log.Fatalf(
+						"unknown flag %q; usage: jobclaw submit <application_id> [--confirm]",
+						os.Args[3],
+					)
+				}
+
+				confirmed = true
+			}
+
+			runSubmit(applicationID, confirmed, db)
 			return
 
 		case "resume":
@@ -531,6 +549,7 @@ func runPrepare(
 
 func runSubmit(
 	applicationID int64,
+	confirmed bool,
 	db *database.DB,
 ) {
 	ctx, cancel := context.WithTimeout(
@@ -547,6 +566,10 @@ func runSubmit(
 
 	registry := application.NewStaticSubmissionAdapterRegistry()
 
+	// Tracked separately so the dry-run preview can report which targets are
+	// actually wired. The registry exposes no listing of its own.
+	var targets []application.SubmissionTargetType
+
 	manualAdapter := application.NewManualSubmissionAdapter()
 	if err := registry.Register(
 		application.SubmissionTargetManual,
@@ -555,6 +578,8 @@ func runSubmit(
 		fmt.Printf("configure submission adapter: %v\n", err)
 		return
 	}
+
+	targets = append(targets, application.SubmissionTargetManual)
 
 	if greenhouseBaseURL := strings.TrimSpace(
 		os.Getenv("JOBCLAW_GREENHOUSE_BASE_URL"),
@@ -597,6 +622,8 @@ func runSubmit(
 			fmt.Printf("configure greenhouse submission adapter: %v\n", err)
 			return
 		}
+
+		targets = append(targets, application.SubmissionTargetGreenhouse)
 	}
 
 	submitter := application.NewRegistrySubmissionSubmitter(
@@ -617,26 +644,174 @@ func runSubmit(
 	)
 	service.SetTransactionFactory(transactionFactory)
 
+	fmt.Println("JobClaw Application Submission")
+	fmt.Println("────────────────────────────")
+	fmt.Printf("Application ID: %d\n", applicationID)
+	fmt.Println()
+
+	// Submitting is irreversible and externally visible. Preview is the
+	// default; sending requires an explicit --confirm.
+	if !confirmed {
+		runSubmissionPreview(
+			ctx,
+			applicationID,
+			applicationRepo,
+			jobRepo,
+			questionRepo,
+			targets,
+		)
+
+		return
+	}
+
 	err := service.Submit(
 		ctx,
 		applicationID,
 	)
-	if err != nil {
-		fmt.Println("JobClaw Application Submission")
-		fmt.Println("────────────────────────────")
-		fmt.Printf("Application ID: %d\n", applicationID)
+
+	// Ambiguous is not failure. The request may have reached the employer, so
+	// this must never be reported as "nothing was submitted": that invites a
+	// resubmission and a duplicate application.
+	if errors.Is(err, application.ErrSubmissionAmbiguous) {
+		fmt.Println("Outcome: AMBIGUOUS — DO NOT RESUBMIT")
 		fmt.Println()
-		fmt.Println("External submission is not configured.")
-		fmt.Println("No application was submitted.")
+		fmt.Println("The request may have reached the employer. JobClaw cannot")
+		fmt.Println("confirm whether the application was accepted, so it will")
+		fmt.Println("not retry automatically.")
+		fmt.Println()
+		fmt.Println("The application stays locked in SUBMISSION_IN_PROGRESS")
+		fmt.Println("until you reconcile it manually. Check the employer's")
+		fmt.Println("careers portal or your email for a confirmation before")
+		fmt.Println("taking any further action.")
 		fmt.Println()
 		fmt.Printf("Details: %v\n", err)
-		return
+
+		os.Exit(2)
 	}
 
-	fmt.Println("JobClaw Application Submission")
+	if err != nil {
+		fmt.Println("Outcome: NOT SUBMITTED")
+		fmt.Println()
+		fmt.Println("The application was not sent and local state is unchanged.")
+		fmt.Println()
+		fmt.Printf("Details: %v\n", err)
+
+		os.Exit(1)
+	}
+
+	fmt.Println("Outcome: SUBMITTED")
+	fmt.Println("The employer confirmed receipt of the application.")
+}
+
+// runSubmissionPreview shows what would be sent without crossing the network.
+// Prepared data is assembled through the same path a real submission uses, so
+// the preview reflects the actual payload rather than a reconstruction.
+func runSubmissionPreview(
+	ctx context.Context,
+	applicationID int64,
+	applicationRepo *application.SQLiteRepository,
+	jobRepo *job.SQLiteRepository,
+	questionRepo application.QuestionRepository,
+	targets []application.SubmissionTargetType,
+) {
+	fmt.Println("Mode: DRY RUN — nothing will be sent")
+	fmt.Println()
+
+	app, err := applicationRepo.GetByID(ctx, applicationID)
+	if err != nil {
+		fmt.Printf("load application: %v\n", err)
+		os.Exit(1)
+	}
+
+	if app == nil {
+		fmt.Printf("application %d not found\n", applicationID)
+		os.Exit(1)
+	}
+
+	j, err := jobRepo.GetByID(ctx, app.JobID)
+	if err != nil {
+		fmt.Printf("load job: %v\n", err)
+		os.Exit(1)
+	}
+
+	if j == nil {
+		fmt.Printf("job %d not found\n", app.JobID)
+		os.Exit(1)
+	}
+
+	fmt.Println("Target")
+	fmt.Printf("  Company:  %s\n", j.Company)
+	fmt.Printf("  Role:     %s\n", j.Title)
+	fmt.Printf("  Location: %s\n", j.Location)
+	fmt.Printf("  URL:      %s\n", j.URL)
+	fmt.Println()
+
+	fmt.Println("Application state")
+	fmt.Printf("  Status:   %s\n", app.Status)
+
+	if app.TailoredResumePath == "" {
+		fmt.Println("  Resume:   MISSING")
+	} else {
+		fmt.Printf("  Resume:   %s\n", app.TailoredResumePath)
+	}
+
+	fmt.Println()
+
+	questions, err := questionRepo.ListByApplicationID(ctx, applicationID)
+	if err != nil {
+		fmt.Printf("load questions: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Questionnaire (%d question(s))\n", len(questions))
+
+	if len(questions) == 0 {
+		fmt.Println("  none ingested")
+	}
+
+	unanswered := 0
+
+	for _, question := range questions {
+		answer := question.Answer
+
+		if strings.TrimSpace(answer) == "" {
+			answer = "UNANSWERED"
+			unanswered++
+		}
+
+		fmt.Printf("  • %s\n", question.Question)
+		fmt.Printf(
+			"      field=%s status=%s source=%s\n",
+			question.FieldKey,
+			question.Status,
+			question.AnswerSource,
+		)
+		fmt.Printf("      answer=%s\n", answer)
+	}
+
+	if unanswered > 0 {
+		fmt.Println()
+		fmt.Printf(
+			"  %d question(s) have no answer and would be sent blank.\n",
+			unanswered,
+		)
+	}
+
+	fmt.Println()
+	fmt.Println("Configured submission targets")
+
+	if len(targets) == 0 {
+		fmt.Println("  none")
+	}
+
+	for _, target := range targets {
+		fmt.Printf("  • %s\n", target)
+	}
+
+	fmt.Println()
 	fmt.Println("────────────────────────────")
-	fmt.Printf("Application ID: %d\n", applicationID)
-	fmt.Println("Application submitted successfully.")
+	fmt.Println("Nothing was sent. Review the payload above, then run:")
+	fmt.Printf("  jobclaw submit %d --confirm\n", applicationID)
 }
 
 func runApplication(jobID int64, cfg *config.Config, db *database.DB) {
