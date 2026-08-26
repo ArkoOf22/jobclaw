@@ -125,9 +125,43 @@ Four defects found and fixed:
    the readiness check, since a locked application otherwise fails as
    "not READY_TO_APPLY" and hides the only fact that matters.
 
-Also confirmed working: readiness correctly blocks on a missing resume, source
-isolation survives a dead JobSpy, and the `submit` safety chain refuses an unready
-application even with `--confirm`.
+Also confirmed working: source isolation survives a dead JobSpy, and the `submit`
+safety chain refuses an unready application even with `--confirm`.
+
+### Readiness hardening
+
+Readiness was declaring applications ready on evidence it did not have. Three
+holes, all closed:
+
+1. **Zero questions counted as complete.** The check reported
+   `✓ questionnaire — no questionnaire questions`, which cannot distinguish a form
+   with no questions from a form that was never fetched. A Greenhouse application
+   could pass readiness and be submitted entirely blank. Readiness now consults
+   the event log for `QUESTIONNAIRE_INGESTED` and blocks when ingestion cannot be
+   confirmed, via `WithEventRepository`.
+2. **Status was trusted over content.** A question marked `ANSWERED` or `APPROVED`
+   with an empty answer passed. Blank and whitespace-only answers now block
+   regardless of status.
+3. **A recorded artifact path was treated as proof of existence.** The check only
+   verified the path string was non-empty, and its reason read "artifact path is
+   configured". A deleted or truncated resume passed readiness. Now `os.Stat`
+   confirms the file exists and is non-empty.
+
+Added advisory only, deliberately not a blocker: an `answer_provenance` check
+surfaces LLM-generated answers that are not candidate-verified. Blocking would
+stall the workflow, so the decision sits with the operator reviewing the dry-run
+payload. Consider requiring `QuestionApproved` for LLM answers before real
+submissions.
+
+Four existing readiness tests and one preparation test were asserting the old
+permissive behavior, which is why these holes survived. They used placeholder
+paths like `"resume.txt"` that never existed on disk. Updated to write real
+temp-file artifacts.
+
+Separately, tests were writing `data/applications/...` into the source tree
+because workspaces are created relative to the working directory. Leftovers there
+can mask or unmask failures between runs. Added a `useTempWorkingDir` helper and
+applied it to every test that creates a workspace.
 
 ### Open: scoring is calibrated out of reach
 
@@ -158,10 +192,23 @@ rather than a wall.
 cannot run. Everything up to and including readiness validation now works
 without it. Set it with `scripts/set-openrouter-key.sh`.
 
-Questionnaire ingestion was not exercised: it needs `JOBCLAW_GREENHOUSE_BASE_URL`
-plus an API key. Readiness currently passes questionnaire checks with "no
-questionnaire questions", which is a soft failure mode worth tightening once
-ingestion runs, since nothing distinguishes "no questions" from "not yet ingested".
+Questionnaire ingestion has still not been exercised against a real form: it needs
+`JOBCLAW_GREENHOUSE_BASE_URL` plus `JOBCLAW_GREENHOUSE_API_KEY`. Readiness now
+blocks until ingestion is confirmed, so this is the next hard requirement for a
+complete slice rather than something that can be skipped.
+
+Current end-to-end position on a scratch DB, with no credentials set:
+
+```
+discover  OK   3 genuine Backend Engineer roles via Greenhouse
+score     OK   classification wired, 68.5 / 68.0 / 51.0, all SKIP on thresholds
+approve   OK   manual gate, SCORED -> APPROVED
+application OK application + workspace created, resume PENDING
+prepare   OK   correctly BLOCKED on: resume missing, questionnaire not ingested
+submit    OK   dry run prints payload; --confirm refuses an unready application
+```
+
+Everything mechanical works. What remains is credentials and scoring calibration.
 
 ## Roadmap position
 
