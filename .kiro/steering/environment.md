@@ -48,9 +48,21 @@ control, and SSM already provides access.
 
 ## Also on the host
 
-- **`/home/openclaw/jobspy-mcp`** — the JobSpy MCP server with its own `.venv`. Currently **not
-  running**; nothing listens on port 8000. JobSpy discovery cannot work until it is started.
-  This is the missing piece behind "MCP wiring incomplete."
+- **`/home/openclaw/jobspy-mcp`** — the JobSpy MCP server, now running as a systemd
+  service (`jobspy-mcp.service`, enabled at boot) on `127.0.0.1:8000`, which is
+  `defaultJobSpyURL`. The unit is version-controlled at `deploy/jobspy-mcp.service`.
+
+  Manage it with `sudo systemctl {status,restart} jobspy-mcp`; logs go to
+  `/home/openclaw/jobspy-mcp/logs/jobspy.log`.
+
+  Scrapes LinkedIn, Indeed, Glassdoor, ZipRecruiter, Google Jobs, Bayt, Naukri, and
+  BDJobs. Verified working from this instance despite the datacenter IP, returning
+  real Bengaluru backend roles. Success rates may degrade over time, since job
+  boards actively block datacenter ranges; the upstream project suggests proxies if
+  that happens.
+
+  The HTTP endpoint is **unauthenticated** unless `JOBSPY_HTTP_TOKEN` is set. It is
+  bound to loopback, so keep it there.
 - **Tailscale** (`100.107.167.115`) — an alternative network path if SSM is ever unavailable.
 - `openclaw-gateway` on `127.0.0.1:18789` and `gog` on `127.0.0.1:8788` — unrelated tooling.
 
