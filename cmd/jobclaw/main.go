@@ -29,6 +29,12 @@ const (
 	defaultCandidateConfig = "config/candidate.yaml"
 	defaultPreferences     = "config/preferences.yaml"
 	defaultJobSpyURL       = "http://127.0.0.1:8000/mcp"
+
+	// Greenhouse's public Job Board API. Every GET, including a job's
+	// application questions, is unauthenticated; only the POST submission
+	// endpoint requires a key. Defaulting this means reading an application
+	// form needs no configuration at all.
+	defaultGreenhouseBaseURL = "https://boards-api.greenhouse.io/v1"
 )
 
 func main() {
@@ -170,38 +176,46 @@ func main() {
 			}
 
 		case "questionnaire":
-			if len(os.Args) != 3 && len(os.Args) != 5 {
-				log.Fatal(
-					"usage: jobclaw questionnaire <application_id> [--source <path>]",
-				)
-			}
-
 			applicationID, err := strconv.ParseInt(os.Args[2], 10, 64)
 			if err != nil || applicationID <= 0 {
 				log.Fatal("application ID must be a positive integer")
 			}
 
-			var sourcePath string
+			var (
+				sourcePath     string
+				fromGreenhouse bool
+			)
 
-			if len(os.Args) == 5 {
-				if os.Args[3] != "--source" {
-					log.Fatal(
-						"usage: jobclaw questionnaire <application_id> [--source <path>]",
-					)
-				}
+			switch {
+			case len(os.Args) == 4 && os.Args[3] == "--from-greenhouse":
+				// Fetch the live application form from Greenhouse's public Job
+				// Board API. Requires no credentials.
+				fromGreenhouse = true
 
+			case len(os.Args) == 5 && os.Args[3] == "--source":
 				sourcePath = os.Args[4]
+
 				if sourcePath == "" {
 					log.Fatal("questionnaire source path is required")
 				}
+
+			case len(os.Args) == 3:
+				// Resolve answers for questions that are already ingested.
+
+			default:
+				log.Fatal(
+					"usage: jobclaw questionnaire <application_id> [--source <path> | --from-greenhouse]",
+				)
 			}
 
 			runQuestionnaire(
 				applicationID,
 				sourcePath,
+				fromGreenhouse,
 				cfg,
 				db,
 			)
+
 			return
 
 		case "prepare":
@@ -581,9 +595,23 @@ func runSubmit(
 
 	targets = append(targets, application.SubmissionTargetManual)
 
-	if greenhouseBaseURL := strings.TrimSpace(
-		os.Getenv("JOBCLAW_GREENHOUSE_BASE_URL"),
-	); greenhouseBaseURL != "" {
+	// Register the Greenhouse adapter only when a Job Board API Key is present,
+	// since only the POST submission endpoint requires one. Gating on the base
+	// URL instead used to abort the entire command, including the dry run, when
+	// a URL was configured without a key.
+	//
+	// Note that the Job Board API Key is issued by the employer from their own
+	// Greenhouse settings. An applicant cannot obtain one for a company they do
+	// not work for, so automated submission is generally unavailable and the
+	// MANUAL target is the realistic terminal step.
+	if greenhouseAPIKey := strings.TrimSpace(
+		os.Getenv("JOBCLAW_GREENHOUSE_API_KEY"),
+	); greenhouseAPIKey != "" {
+		greenhouseBaseURL := getEnvOrDefault(
+			"JOBCLAW_GREENHOUSE_BASE_URL",
+			defaultGreenhouseBaseURL,
+		)
+
 		httpClient := &http.Client{
 			Timeout: 20 * time.Second,
 		}
@@ -592,17 +620,6 @@ func runSubmit(
 			httpClient,
 			greenhouseBaseURL,
 		)
-
-		greenhouseAPIKey := strings.TrimSpace(
-			os.Getenv("JOBCLAW_GREENHOUSE_API_KEY"),
-		)
-
-		if greenhouseAPIKey == "" {
-			fmt.Println(
-				"configure greenhouse submission adapter: JOBCLAW_GREENHOUSE_API_KEY is required",
-			)
-			return
-		}
 
 		greenhouseAdapter.SetAPIKey(
 			greenhouseAPIKey,
@@ -1051,6 +1068,7 @@ func runAnswerList(db *database.DB) {
 func runQuestionnaire(
 	applicationID int64,
 	sourcePath string,
+	fromGreenhouse bool,
 	cfg *config.Config,
 	db *database.DB,
 ) {
@@ -1124,7 +1142,18 @@ func runQuestionnaire(
 
 	var results []application.AnswerResolution
 
-	if sourcePath != "" {
+	if fromGreenhouse {
+		results = ingestGreenhouseQuestionnaire(
+			ctx,
+			applicationID,
+			db,
+			questionRepo,
+			eventRepo,
+			resolver,
+			questionAnswerLLM,
+			candidateContext,
+		)
+	} else if sourcePath != "" {
 		raw, err := os.ReadFile(filepath.Clean(sourcePath))
 		if err != nil {
 			log.Fatalf(
@@ -1619,4 +1648,103 @@ func parseCommaSeparatedEnv(name string) []string {
 	}
 
 	return values
+}
+
+// ingestGreenhouseQuestionnaire fetches an application form from Greenhouse's
+// public Job Board API, ingests its questions, and resolves the answers.
+//
+// This closes the last gap in the pipeline. The HTTP form provider and the
+// questionnaire ingestor both already existed, but nothing connected them, so
+// questions could only be ingested from a hand-written local text file. The form
+// provider was wired solely into the submission adapter, which needs a Job Board
+// API Key that only the employer can issue.
+//
+// Reading the form needs no credentials: every GET on the Job Board API is
+// public. See https://docs.greenhouse.io/job-board.html
+func ingestGreenhouseQuestionnaire(
+	ctx context.Context,
+	applicationID int64,
+	db *database.DB,
+	questionRepo application.QuestionRepository,
+	eventRepo application.EventRepository,
+	resolver *application.AnswerResolver,
+	questionAnswerLLM application.QuestionAnswerLLM,
+	candidateContext string,
+) []application.AnswerResolution {
+	applicationRepo := application.NewSQLiteRepository(db)
+	jobRepo := job.NewSQLiteRepository(db)
+
+	app, err := applicationRepo.GetByID(ctx, applicationID)
+	if err != nil {
+		log.Fatalf("load application: %v", err)
+	}
+
+	if app == nil {
+		log.Fatalf("application %d not found", applicationID)
+	}
+
+	j, err := jobRepo.GetByID(ctx, app.JobID)
+	if err != nil {
+		log.Fatalf("load job: %v", err)
+	}
+
+	if j == nil {
+		log.Fatalf("job %d not found", app.JobID)
+	}
+
+	baseURL := getEnvOrDefault(
+		"JOBCLAW_GREENHOUSE_BASE_URL",
+		defaultGreenhouseBaseURL,
+	)
+
+	provider := application.NewGreenhouseHTTPFormProvider(
+		&http.Client{Timeout: 30 * time.Second},
+		baseURL,
+	)
+
+	form, err := provider.GetApplicationForm(ctx, *j)
+	if err != nil {
+		log.Fatalf("fetch greenhouse application form: %v", err)
+	}
+
+	inputs := application.GreenhouseFormToQuestionnaireInputs(form)
+
+	if len(inputs) == 0 {
+		log.Fatalf(
+			"greenhouse form for job %d produced no questions; refusing to record an empty questionnaire",
+			j.ID,
+		)
+	}
+
+	fmt.Println("JobClaw Questionnaire")
+	fmt.Println("────────────────────────────")
+	fmt.Printf("Source:      greenhouse (%s)\n", baseURL)
+	fmt.Printf("Job:         %s — %s\n", j.Company, j.Title)
+	fmt.Printf("Form fields: %d\n", len(form.Fields))
+	fmt.Printf("Questions:   %d after dropping artifact fields\n", len(inputs))
+	fmt.Println()
+
+	ingestor := application.NewQuestionnaireIngestor(
+		questionRepo,
+		eventRepo,
+	)
+
+	if err := ingestor.Ingest(ctx, applicationID, inputs); err != nil {
+		log.Fatalf("ingest greenhouse questionnaire: %v", err)
+	}
+
+	service := application.NewQuestionnaireService(
+		questionRepo,
+		resolver,
+		questionAnswerLLM,
+		candidateContext,
+		eventRepo,
+	)
+
+	results, err := service.ProcessApplication(ctx, applicationID)
+	if err != nil {
+		log.Fatalf("resolve greenhouse questionnaire: %v", err)
+	}
+
+	return results
 }
