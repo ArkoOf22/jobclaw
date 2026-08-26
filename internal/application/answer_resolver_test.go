@@ -469,3 +469,90 @@ func TestAnswerResolverIgnoresUnverifiedSemanticMatch(t *testing.T) {
 		)
 	}
 }
+
+// A location-conditional question must not receive the generic answer.
+// Answering "If located in the US, in what city and state do you reside?" with
+// "Bangalore, India" reads as a claim to live in the US.
+func TestClassifyQuestionFieldSeparatesLocationConditional(t *testing.T) {
+	testCases := []struct {
+		name     string
+		question string
+		want     string
+	}{
+		{
+			name:     "us conditional gets its own key",
+			question: "If located in the US, in what city and state do you reside?",
+			want:     "us_city_and_state",
+		},
+		{
+			name:     "based-in phrasing",
+			question: "If based in the United States, what city and state?",
+			want:     "us_city_and_state",
+		},
+		{
+			name:     "if applicable phrasing",
+			question: "City and state, if applicable",
+			want:     "us_city_and_state",
+		},
+		{
+			name:     "unconditional keeps the generic key",
+			question: "In what city and state do you reside?",
+			want:     "city_and_state",
+		},
+		{
+			name:     "unconditional city and country",
+			question: "What city and country are you based in?",
+			want:     "city_and_state",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := classifyQuestionField(testCase.question)
+
+			if got != testCase.want {
+				t.Fatalf(
+					"classify(%q) = %q, want %q",
+					testCase.question,
+					got,
+					testCase.want,
+				)
+			}
+		})
+	}
+}
+
+// With no us_city_and_state answer recorded, the conditional question must fall
+// through to review rather than borrowing the generic address.
+func TestConditionalQuestionDoesNotBorrowGenericAnswer(t *testing.T) {
+	resolver := NewAnswerResolver(&fakeAnswerRepository{
+		answers: map[string]*CandidateAnswer{
+			"city_and_state": {
+				FieldKey: "city_and_state",
+				Answer:   "Bangalore, India",
+				Verified: true,
+			},
+		},
+	})
+
+	resolution, err := resolver.Resolve(
+		context.Background(),
+		ApplicationQuestion{
+			ID:       1,
+			Question: "If located in the US, in what city and state do you reside?",
+			FieldKey: "question_64191510",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if resolution.Status != ResolutionNeedsReview {
+		t.Fatalf(
+			"status = %q with answer %q, want %q; a US-only question must not take the generic address",
+			resolution.Status,
+			resolution.Answer,
+			ResolutionNeedsReview,
+		)
+	}
+}

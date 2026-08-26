@@ -110,6 +110,20 @@ func classifyQuestionField(question string) string {
 		strings.Contains(q, "countries you anticipate"):
 		return "work_countries"
 
+	// A location-conditional question is a different question from the
+	// unconditional one, and answering it with a generic address is wrong.
+	// "If located in the US, in what city and state do you reside?" was being
+	// answered "Bangalore, India", which reads as a claim to live in the US.
+	//
+	// These route to their own key so a deliberate answer can be recorded once,
+	// for example us_city_and_state = "N/A - I reside in Bangalore, India".
+	// Checked before the general case so the conditional form wins.
+	case isLocationConditional(q) &&
+		(strings.Contains(q, "city and state") ||
+			strings.Contains(q, "city and country") ||
+			strings.Contains(q, "city or state")):
+		return "us_city_and_state"
+
 	case strings.Contains(q, "city and state"),
 		strings.Contains(q, "city and country"):
 		return "city_and_state"
@@ -142,4 +156,33 @@ func classifyQuestionField(question string) string {
 	default:
 		return ""
 	}
+}
+
+// isLocationConditional reports whether a question only applies to candidates in
+// a particular place.
+//
+// These need their own answer rather than the generic one. Answering "in what
+// city and state do you reside" with an Indian address is correct; answering "if
+// located in the US, in what city and state do you reside" with the same value
+// implies a US residence the candidate does not have.
+func isLocationConditional(normalizedQuestion string) bool {
+	conditionals := []string{
+		"if located in",
+		"if you are located in",
+		"if based in",
+		"if you reside in",
+		"if you are a resident of",
+		"if in the us",
+		"if applicable",
+		"where applicable",
+		"only if",
+	}
+
+	for _, conditional := range conditionals {
+		if strings.Contains(normalizedQuestion, conditional) {
+			return true
+		}
+	}
+
+	return false
 }
