@@ -186,7 +186,48 @@ Not a blocker for the slice: approval is a manual human gate and
 `SCORED -> APPROVED` is a legal transition, so a SKIP recommendation is advice
 rather than a wall.
 
-### Greenhouse: automated submission is not available to applicants
+### Settled: automated Greenhouse submission is not achievable
+
+Investigated empirically, read-only, on 2026-08-26. Do not re-litigate this; the
+constraint is external and not a gap in JobClaw.
+
+The public application form is a React app at
+`job-boards.greenhouse.io/embed/job_app?for={board}&token={job_id}`. Its `<form>`
+carries `method="get"` as a placeholder; the real submission is a JavaScript call.
+Reading the client bundle, that call requires all of:
+
+```
+submitPath, csrfToken, fingerprint, recaptchaClient,
+securityCode, captchaFailed, jobApplicationRequestToken
+```
+
+and attaches `g-recaptcha-enterprise-token` from `recaptchaClient.performAssessment()`.
+
+That closes both candidate paths:
+
+- **Replicating the POST server-side** is impossible. The payload needs a
+  **reCAPTCHA Enterprise** token, which is minted by Google against a live browser
+  session. It cannot be produced from a server.
+- **Driving a headless browser** does not work either. This is invisible,
+  score-based reCAPTCHA rather than a solvable checkbox: it scores browser
+  fingerprint, IP reputation, and behaviour. Headless Chromium on an EC2
+  datacenter IP is close to the worst-scoring combination. A separate
+  `fingerprint` field is collected independently of reCAPTCHA, and the code has
+  explicit `captchaFailed` and `captcha_retried` handling, so Greenhouse both
+  expects and polices automation attempts.
+
+Defeating this would mean circumventing an access control the employer
+deliberately enabled. Out of scope regardless of feasibility.
+
+**Consequence for the product.** The realistic terminal step is a one-tap human
+submit: JobClaw prepares and validates everything, then hands over the apply URL,
+the resume file, and every resolved answer ready to paste. `MANUAL` is the correct
+adapter, not a placeholder for missing work.
+
+This finding is Greenhouse-specific. Other ATS platforms may differ and are worth
+checking individually before assuming the same.
+
+### Greenhouse: the API path also requires an employer key
 
 Per the [Job Board API docs](https://docs.greenhouse.io/job-board.html), only the
 POST submission endpoint requires auth. **Every GET is public**, including a job's
