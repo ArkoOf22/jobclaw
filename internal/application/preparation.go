@@ -26,7 +26,7 @@ func NewApplicationPreparationService(
 		readiness: NewApplicationReadinessEvaluator(
 			applications,
 			questions,
-		),
+		).WithEventRepository(events),
 	}
 }
 
