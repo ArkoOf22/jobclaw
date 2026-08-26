@@ -200,3 +200,36 @@ Each row is re-checked inside the delete transaction, so a job that gained an
 application or advanced status between preview and confirm survives.
 
 Back up `data/jobclaw.db` first. There is no undo.
+
+### Google Sheet review list
+
+```bash
+jobclaw sheet init              # write the header row, once
+jobclaw sheet sync [--dry-run]  # append newly shortlisted jobs
+```
+
+Live sheet: `1x38Aj46Dz1XQphTV1gjXUZNuIFXpexXvDhttzBNfl-4`, tab `Jobs`.
+
+Writes go through the `gog` CLI, which is already OAuth-authorised for
+`arkodeepkoley123@gmail.com` with `spreadsheets` and `drive.file` scopes. No GCP
+service account is involved.
+
+Required in `.env`: `JOBCLAW_SHEET_ID`, `JOBCLAW_SHEET_ACCOUNT`,
+`GOG_KEYRING_PASSWORD`. The last one is not optional: gog keeps its refresh token
+in a file-backed keyring and cannot prompt for a password from a timer.
+
+Optional: `JOBCLAW_SHEET_TAB` (default `Jobs`), `JOBCLAW_GOG_BIN` (default `gog`).
+
+Setup notes, both of which cost time to rediscover:
+
+- A new spreadsheet's only tab is `Sheet1`. Create the `Jobs` tab with
+  `gog sheets add-tab <id> Jobs` or point `JOBCLAW_SHEET_TAB` at `Sheet1`.
+- Scopes alone are not enough. The Sheets and Drive APIs must also be enabled in
+  the Cloud project behind the OAuth client, otherwise calls fail with
+  "Sheets API is not enabled for this OAuth project".
+
+`--dry-run` needs no Google credentials at all, so row selection can be verified
+without auth.
+
+Sync is idempotent: `jobs.sheet_synced_at` is set only after a successful append,
+so a second run adds nothing and a failed run leaves rows eligible for retry.
