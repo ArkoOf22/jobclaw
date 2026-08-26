@@ -36,6 +36,7 @@ func seedPruneJob(
 	if err := NewSQLiteSourceRepository(repo.db).EnsureSource(
 		ctx,
 		"greenhouse",
+		"https://boards-api.greenhouse.io/v1",
 	); err != nil {
 		t.Fatal(err)
 	}
