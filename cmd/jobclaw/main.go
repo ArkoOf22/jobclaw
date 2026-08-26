@@ -1035,12 +1035,24 @@ func runScore(
 		cfg.Preferences.JobPreferences,
 	)
 
+	// Company classification is a scoring input, and under
+	// require_product_company an UNKNOWN classification forces SKIP. Wire the
+	// classifier in so scoring can classify on demand instead of depending on
+	// a separate step that nothing in this CLI ever ran.
+	companyService := company.NewService(
+		companyRepo,
+		company.NewEvidenceCollector(db),
+		company.NewEvidenceClassifier(
+			company.NewRuleBasedClassifier(),
+		),
+	)
+
 	service := scoring.NewService(
 		jobRepo,
 		companyRepo,
 		scoreRepo,
 		scorer,
-	)
+	).WithCompanyClassifier(companyService)
 
 	jobs, err := jobRepo.List(ctx, 1000)
 	if err != nil {
