@@ -320,8 +320,9 @@ func runPrune(
 	)
 	fmt.Printf("Eligible:   %d\n", len(candidates))
 	fmt.Println()
-	fmt.Println("Excluded from consideration: jobs with an application, and any")
-	fmt.Println("job at APPROVED, APPLIED, INTERVIEW, or OFFER.")
+	fmt.Println("Never eligible: SHORTLISTED jobs (an open decision), jobs with")
+	fmt.Println("an application, and anything at APPROVED, APPLIED, INTERVIEW,")
+	fmt.Println("or OFFER. Reject a shortlisted job first if you want it gone.")
 	fmt.Println()
 
 	if len(candidates) == 0 {

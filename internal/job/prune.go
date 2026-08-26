@@ -31,15 +31,19 @@ type PruneCriteria struct {
 
 // prunableStatuses are the only statuses that may ever be removed.
 //
-// A job the candidate acted on is history worth keeping, and anything at or past
-// APPROVED may have an application, a generated resume, or a real submission
-// attached. Restricting the set here rather than at the call site means no caller
-// can widen it by passing different criteria.
+// Anything at or past APPROVED may have an application, a generated resume, or a
+// real submission attached. Restricting the set here rather than at the call site
+// means no caller can widen it by passing different criteria.
+//
+// SHORTLISTED is deliberately absent. A shortlisted job is an open decision the
+// candidate still owes, so bulk-deleting it destroys the queue rather than
+// tidying it. The first dry run against real data would have removed three
+// shortlisted roles scoring 70 to 77. To retire one, reject it first: that is an
+// explicit decision, and REJECTED is prunable.
 var prunableStatuses = map[Status]bool{
-	StatusDiscovered:  true,
-	StatusScored:      true,
-	StatusShortlisted: true,
-	StatusRejected:    true,
+	StatusDiscovered: true,
+	StatusScored:     true,
+	StatusRejected:   true,
 }
 
 // FindPrunable returns jobs matching the criteria that are safe to delete.
@@ -57,7 +61,6 @@ func (r *SQLiteRepository) FindPrunable(
 		statuses = []Status{
 			StatusDiscovered,
 			StatusScored,
-			StatusShortlisted,
 			StatusRejected,
 		}
 	}
@@ -189,7 +192,7 @@ func (r *SQLiteRepository) DeleteJobs(
 			WHERE j.id = ?
 			  AND a.id IS NULL
 			  AND j.status IN (
-				'DISCOVERED', 'SCORED', 'SHORTLISTED', 'REJECTED'
+				'DISCOVERED', 'SCORED', 'REJECTED'
 			  )
 		`, id).Scan(&guard); err != nil {
 			return 0, fmt.Errorf("verify job %d before delete: %w", id, err)
