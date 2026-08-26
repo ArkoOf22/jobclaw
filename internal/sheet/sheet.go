@@ -219,3 +219,158 @@ func firstLines(text string, limit int) string {
 
 	return strings.Join(lines, " | ")
 }
+
+// Column letters, derived from Header() order. Kept as constants because the
+// Sheets API addresses cells by letter, not by index.
+const (
+	columnResume = "I"
+	columnStatus = "J"
+)
+
+// FindRowByJobID returns the 1-based sheet row for a job, or 0 when absent.
+//
+// Job IDs live in column A, so only that column is read. The sheet is written in
+// score order rather than ID order, and rows are never renumbered, so the row for
+// a job cannot be computed and has to be looked up.
+func (w *GogWriter) FindRowByJobID(
+	ctx context.Context,
+	jobID int64,
+) (int, error) {
+	args := []string{
+		"sheets", "get",
+		w.config.SpreadsheetID,
+		w.config.SheetName + "!A1:A1000",
+		"--plain",
+		"--no-input",
+	}
+
+	if w.config.Account != "" {
+		args = append(args, "--account", w.config.Account)
+	}
+
+	command := exec.CommandContext(ctx, w.config.Binary, args...)
+
+	var stdout, stderr bytes.Buffer
+
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+
+	if err := command.Run(); err != nil {
+		return 0, fmt.Errorf(
+			"read sheet job IDs: %w: %s",
+			err,
+			summarize(stderr.String()),
+		)
+	}
+
+	want := fmt.Sprintf("%d", jobID)
+
+	for index, line := range strings.Split(
+		strings.TrimRight(stdout.String(), "\n"),
+		"\n",
+	) {
+		if strings.TrimSpace(line) == want {
+			// Sheets rows are 1-based.
+			return index + 1, nil
+		}
+	}
+
+	return 0, nil
+}
+
+// RowUpdate carries the cells to change. Empty fields are left untouched, so a
+// status change does not blank an existing resume link.
+type RowUpdate struct {
+	Status     string
+	ResumeLink string
+}
+
+// UpdateJobRow changes the status and resume cells for a job.
+//
+// Returns false when the job has no row yet, which happens for a job acted on
+// before the sheet was synced. That is not an error: the caller decides whether
+// to care.
+func (w *GogWriter) UpdateJobRow(
+	ctx context.Context,
+	jobID int64,
+	update RowUpdate,
+) (bool, error) {
+	row, err := w.FindRowByJobID(ctx, jobID)
+	if err != nil {
+		return false, err
+	}
+
+	if row == 0 {
+		return false, nil
+	}
+
+	// Each cell is written separately rather than as one range, because the
+	// resume and status columns are not adjacent and a range write would clobber
+	// the "Why" column between them.
+	if update.ResumeLink != "" {
+		if err := w.updateCell(
+			ctx,
+			fmt.Sprintf("%s%d", columnResume, row),
+			update.ResumeLink,
+		); err != nil {
+			return false, err
+		}
+	}
+
+	if update.Status != "" {
+		if err := w.updateCell(
+			ctx,
+			fmt.Sprintf("%s%d", columnStatus, row),
+			update.Status,
+		); err != nil {
+			return false, err
+		}
+	}
+
+	return true, nil
+}
+
+func (w *GogWriter) updateCell(
+	ctx context.Context,
+	cell string,
+	value string,
+) error {
+	encoded, err := json.Marshal([][]string{{value}})
+	if err != nil {
+		return fmt.Errorf("encode cell value: %w", err)
+	}
+
+	args := []string{
+		"sheets", "update",
+		w.config.SpreadsheetID,
+		w.config.SheetName + "!" + cell,
+		"--values-json", string(encoded),
+		"--input", "USER_ENTERED",
+		"--no-input",
+	}
+
+	if w.config.Account != "" {
+		args = append(args, "--account", w.config.Account)
+	}
+
+	if w.config.DryRun {
+		args = append(args, "--dry-run")
+	}
+
+	command := exec.CommandContext(ctx, w.config.Binary, args...)
+
+	var stderr bytes.Buffer
+
+	command.Stderr = &stderr
+
+	if err := command.Run(); err != nil {
+		return fmt.Errorf(
+			"update sheet cell %s: %w: %s",
+			cell,
+			err,
+			summarize(stderr.String()),
+		)
+	}
+
+	return nil
+}

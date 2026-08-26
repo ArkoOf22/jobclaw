@@ -22,6 +22,7 @@ import (
 	"jobclaw/internal/job"
 	"jobclaw/internal/llm/openrouter"
 	"jobclaw/internal/scoring"
+	"jobclaw/internal/sheet"
 )
 
 const (
@@ -92,6 +93,21 @@ func main() {
 			}
 
 			runStatus(databasePath, asJSON, db)
+			return
+
+		case "mark":
+			if len(os.Args) != 4 {
+				log.Fatal(
+					"usage: jobclaw mark <job_id> <applied|skipped>",
+				)
+			}
+
+			jobID, err := strconv.ParseInt(os.Args[2], 10, 64)
+			if err != nil || jobID <= 0 {
+				log.Fatal("job ID must be a positive integer")
+			}
+
+			runMark(jobID, os.Args[3], db)
 			return
 
 		case "sheet":
@@ -657,6 +673,17 @@ func runResume(
 	fmt.Printf("Job ID:     %d\n", jobID)
 	fmt.Printf("Model:      %s\n", resumeConfig.LLM.Model)
 	fmt.Printf("Output:     %s\n", outputPath)
+
+	// Record the artifact on the sheet so the row shows it is ready to use.
+	// Best-effort: the resume already exists on disk regardless.
+	updateSheetStatus(
+		context.Background(),
+		jobID,
+		sheet.RowUpdate{
+			Status:     sheetStatusResumeReady,
+			ResumeLink: outputPath,
+		},
+	)
 }
 
 func runPrepare(

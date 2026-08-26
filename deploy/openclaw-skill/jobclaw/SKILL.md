@@ -48,7 +48,17 @@ jobclaw-agent prepare <app_id>       # validate readiness
 jobclaw-agent submit <app_id>        # PREVIEW ONLY
 
 jobclaw-agent sheet sync             # add new shortlisted jobs to the sheet
+
+jobclaw-agent mark <job_id> applied  # he applied by hand
+jobclaw-agent mark <job_id> skipped  # he decided against it
 ```
+
+`mark` closes the loop. Submission happens by hand on the employer's own form, so
+nothing can detect it: he has to tell you, and you record it. Without that the
+sheet fills with rows still marked NEW.
+
+`mark applied` also advances the job through APPROVED if needed, because applying
+to something is the approval. `mark skipped` rejects it so it never resurfaces.
 
 The review sheet is the shared source of record Arkodeep reads on his phone:
 https://docs.google.com/spreadsheets/d/1x38Aj46Dz1XQphTV1gjXUZNuIFXpexXvDhttzBNfl-4/edit
@@ -93,6 +103,14 @@ Note that `application` takes a **job** id and everything after it takes an
 usual cause is a question with no verified answer. He fixes that with
 `jobclaw answer add <field_key> <answer>` himself, then you re-run
 `questionnaire <app_id>` and `prepare <app_id>`.
+
+**When he says he applied**, run `mark <job_id> applied`. When he passes on
+something, run `mark <job_id> skipped`. Confirm which job you acted on by company
+and title, not by row number, so a mistake is visible before it matters.
+
+**When he asks for a resume**, run `resume <job_id>`. That generates the tailored
+resume, records its path on the sheet, and sets the row to RESUME READY. Tell him
+the file path. Only generate resumes he asked for: each one is a paid model call.
 
 **When `prepare` reports READY**, run `submit <app_id>` to get the preview and
 send him the whole thing: target employer, resume path, and every question with

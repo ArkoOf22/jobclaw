@@ -147,6 +147,22 @@ prepare)
     exec "${BINARY}" prepare "$1"
     ;;
 
+# Records an outcome the candidate reports: they applied by hand, or decided to
+# skip. Updates both the database and the review sheet. Reversible and local, so
+# the agent may do it on his instruction.
+mark)
+    require_positive_int "${1:-}"
+    job_id="$1"
+    shift
+
+    case "${1:-}" in
+    applied | skipped) ;;
+    *) die "mark accepts only 'applied' or 'skipped'" ;;
+    esac
+
+    exec "${BINARY}" mark "${job_id}" "$1"
+    ;;
+
 # --- Preview only, never sends ---
 submit)
     require_positive_int "${1:-}"
