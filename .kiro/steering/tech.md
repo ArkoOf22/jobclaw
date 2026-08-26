@@ -176,3 +176,27 @@ Real submission stays with the human:
 ```bash
 jobclaw submit <application_id> --confirm
 ```
+
+### Pruning stale jobs
+
+Discovery accumulates: a sweep stores everything that matched at the time, and
+matching rules improve afterwards. Hundreds of stale rejects hide the real queue
+and slow a full re-score.
+
+```bash
+jobclaw prune --older-than 30            # preview, nothing deleted
+jobclaw prune --older-than 30 --confirm  # delete
+```
+
+Preview is the default, same gate as submission, because deletion is irreversible.
+
+Never eligible: `SHORTLISTED` jobs, since those are open decisions; any job with
+an application, since that implies generated artifacts and possibly a submission;
+and anything at `APPROVED`, `APPLIED`, `INTERVIEW`, or `OFFER`. Asking to prune a
+protected status is an error rather than a silently empty result. To retire a
+shortlisted job, `reject` it first.
+
+Each row is re-checked inside the delete transaction, so a job that gained an
+application or advanced status between preview and confirm survives.
+
+Back up `data/jobclaw.db` first. There is no undo.
