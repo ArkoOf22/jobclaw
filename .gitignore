@@ -1,19 +1,53 @@
-# Build artifacts
-bin/jobclaw
+# ---- Secrets ----
+# Never commit real credentials. .env.example is the tracked template.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
 
-# Local runtime data
-data/*.db
-data/*.db-shm
-data/*.db-wal
+# ---- Build artifacts ----
+bin/
+jobclaw
+/jobclaw
 
-# Go tooling
+# ---- Go tooling ----
 *.test
+*.out
 coverage.out
+coverage.html
+vendor/
+go.work
+go.work.sum
 
-# Runtime JobClaw data
+# ---- Runtime data ----
+# Application workspaces, generated artifacts, and the SQLite database all live
+# under data/. None of it belongs in version control.
 data/
 
-# Local NotebookLM knowledge-base artifacts
+# Guard against stray database files outside data/
+*.db
+*.db-shm
+*.db-wal
+
+# ---- Local knowledge-base artifacts ----
 notebooklm/
 notebooklm-upload/
 notebooklm-upload.tar.gz
+
+# Auto-generated file inventory. Regenerated on demand, stale immediately.
+.superbrain/
+
+# ---- Editor / OS ----
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# ---- Kiro ----
+# .kiro/steering/ and .kiro/specs/ are intentionally tracked: they are shared
+# project context. Local machine settings are not.
+.kiro/settings/
