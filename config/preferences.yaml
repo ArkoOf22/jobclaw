@@ -37,12 +37,29 @@ job_preferences:
       - "Platform Engineer"
       - "Distributed Systems Engineer"
 
+    # Matched against the job title. Any hit forces a SKIP regardless of score.
     excluded:
       - "Frontend Engineer"
       - "UI Engineer"
       - "QA Engineer"
       - "Manual Tester"
       - "Data Analyst"
+      # Entry-level and non-permanent roles. A Stripe "Software Engineer, Intern"
+      # scored 67.8 and was shortlisted, because scoring rewards the company and
+      # the stack without understanding seniority.
+      - "Intern"
+      - "Internship"
+      - "Trainee"
+      - "Apprentice"
+      - "Graduate Programme"
+      - "Co-op"
+      # Seniority well above two years of experience.
+      - "Staff Engineer"
+      - "Principal Engineer"
+      - "Engineering Manager"
+      - "Director"
+      - "Head of"
+      - "Vice President"
       - "Support Engineer"
       - "Implementation Engineer"
       - "Technical Support Engineer"
