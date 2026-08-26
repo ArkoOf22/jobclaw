@@ -7,6 +7,13 @@ import (
 	"jobclaw/internal/job"
 )
 
+// maxJobDescriptionChars caps the description included in the prompt.
+//
+// Requirements and responsibilities sit well inside this on real postings; what
+// exceeds it is employer marketing. Roughly 1500 tokens, against a master resume
+// of about 700.
+const maxJobDescriptionChars = 6000
+
 type ResumePromptBuilder struct {
 	source *ResumeSource
 }
@@ -106,8 +113,17 @@ Job ID:
 	prompt.WriteString(strings.TrimSpace(j.Location))
 	prompt.WriteString("\n\n")
 
+	// Descriptions are stored as escaped HTML. Sending them raw bills the model
+	// to read markup, so normalise to plain text and drop employer boilerplate
+	// before including it. The description is only a relevance signal, per the
+	// rules above, so nothing factual is lost.
+	description := TrimJobDescription(
+		NormalizeJobDescription(j.Description),
+		maxJobDescriptionChars,
+	)
+
 	prompt.WriteString("Job Description:\n")
-	prompt.WriteString(strings.TrimSpace(j.Description))
+	prompt.WriteString(description)
 	prompt.WriteString("\n\n")
 
 	prompt.WriteString("MASTER RESUME\n\n")
