@@ -1702,6 +1702,15 @@ func ingestGreenhouseQuestionnaire(
 		baseURL,
 	)
 
+	// Employers commonly host their Greenhouse board on their own domain, where
+	// the board token is absent from the job URL. Fall back to the configured
+	// discovery boards, which is where the token came from originally.
+	if boards := parseCommaSeparatedEnv(
+		"JOBCLAW_GREENHOUSE_BOARDS",
+	); len(boards) == 1 {
+		provider.SetBoardToken(boards[0])
+	}
+
 	form, err := provider.GetApplicationForm(ctx, *j)
 	if err != nil {
 		log.Fatalf("fetch greenhouse application form: %v", err)
