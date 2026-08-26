@@ -154,3 +154,25 @@ journalctl -u jobclaw-discover -n 50
 Units are version-controlled in `deploy/`; the wrapper is
 `scripts/scheduled-discovery.sh`, which rebuilds `bin/jobclaw` when any source
 file is newer so a deploy cannot silently keep running stale code.
+
+### Agent / Telegram control
+
+OpenClaw drives JobClaw through `scripts/jobclaw-agent`, a restricted wrapper, not
+the binary directly. The skill lives at `deploy/openclaw-skill/jobclaw/SKILL.md`
+and is installed to `~/.openclaw/workspace/skills/jobclaw/`.
+
+The wrapper enforces the submission gate structurally rather than relying on the
+agent to follow instructions: `--confirm` is rejected in every form, `submit` is
+always a dry run, arguments containing shell metacharacters are refused, and any
+subcommand not explicitly allowlisted is refused. Adding a new JobClaw command
+does not expose it to the agent until someone adds it here deliberately.
+
+Allowed: `status`, `shortlist`, `jobs list`, `job`, `answers`, `approve`,
+`reject`, `application`, `resume`, `questionnaire`, `prepare`, and `submit` as
+preview. Refused: `discover`, `score`, `answer add/update`, and anything else.
+
+Real submission stays with the human:
+
+```bash
+jobclaw submit <application_id> --confirm
+```
