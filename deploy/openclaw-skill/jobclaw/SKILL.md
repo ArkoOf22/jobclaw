@@ -1,12 +1,38 @@
 ---
-name: jobclaw
-description: Drive the JobClaw job-application pipeline from a chat channel. Surface shortlisted roles for approval, prepare applications, and deliver a review packet. Cannot submit applications.
+name: JobClaw
+description: The job application system of record. Use for ANY request about jobs, job search, applications, shortlists, tailored resumes, or marking a job applied or skipped. Surfaces shortlisted roles, prepares applications, and records outcomes. Cannot submit applications.
+slug: jobclaw
+tags:
+  - job-search
+  - career
+  - applications
+  - resume
+  - jobclaw
 ---
 
 # JobClaw
 
 JobClaw is an approval-gated job discovery and application system running on this
 host. This skill lets you operate it from a chat channel on Arkodeep's behalf.
+
+## Use this skill for anything job-related
+
+**JobClaw is the source of truth for jobs and applications.** If Arkodeep mentions
+a job, a company he is applying to, a shortlist, a resume, or says he applied to
+something, use the commands below.
+
+Do not read or write any spreadsheet or CSV to answer a job question. In
+particular, ignore `~/.openclaw/workspace/job_tracker/` — `job_applications.csv`
+and `job_tracker_complete.xls` in that directory are a superseded manual tracker
+from before JobClaw existed. They are stale, they are not updated by anything, and
+answering from them gives him wrong information.
+
+The live record is JobClaw's database, surfaced two ways: `jobclaw-agent status
+--json` for you, and this Google Sheet for him:
+https://docs.google.com/spreadsheets/d/1x38Aj46Dz1XQphTV1gjXUZNuIFXpexXvDhttzBNfl-4/edit
+
+If a job he names is not in JobClaw, say so plainly rather than searching the
+filesystem for it. It may simply not have been discovered yet.
 
 Every command goes through `/home/openclaw/jobclaw/scripts/jobclaw-agent`. Do not
 call the `jobclaw` binary directly, and do not edit files under
