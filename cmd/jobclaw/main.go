@@ -94,6 +94,44 @@ func main() {
 			runStatus(databasePath, asJSON, db)
 			return
 
+		case "sheet":
+			if len(os.Args) < 3 {
+				log.Fatal(
+					"usage: jobclaw sheet <init|sync> [--dry-run]",
+				)
+			}
+
+			switch os.Args[2] {
+			case "init":
+				runSheetInit(db)
+
+			case "sync":
+				dryRun := false
+
+				if len(os.Args) == 4 {
+					if os.Args[3] != "--dry-run" {
+						log.Fatalf(
+							"unknown argument %q; usage: jobclaw sheet sync [--dry-run]",
+							os.Args[3],
+						)
+					}
+
+					dryRun = true
+				} else if len(os.Args) > 4 {
+					log.Fatal("usage: jobclaw sheet sync [--dry-run]")
+				}
+
+				runSheetSync(dryRun, db)
+
+			default:
+				log.Fatalf(
+					"unknown sheet command %q; usage: jobclaw sheet <init|sync>",
+					os.Args[2],
+				)
+			}
+
+			return
+
 		case "prune":
 			// Deletion is irreversible, so it takes the same gate as
 			// submission: preview unless --confirm is given.
