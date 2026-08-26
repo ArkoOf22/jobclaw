@@ -66,6 +66,16 @@ func NormalizeJobDescription(raw string) string {
 	text = trailingSpaces.ReplaceAllString(text, "\n")
 	text = excessBlankLines.ReplaceAllString(text, "\n\n")
 
+	// Tag removal leaves a leading space on most lines, which would defeat
+	// prefix matching downstream.
+	lines := strings.Split(text, "\n")
+	for i := range lines {
+		lines[i] = strings.TrimSpace(lines[i])
+	}
+
+	text = strings.Join(lines, "\n")
+	text = excessBlankLines.ReplaceAllString(text, "\n\n")
+
 	return strings.TrimSpace(text)
 }
 
@@ -74,8 +84,11 @@ func NormalizeJobDescription(raw string) string {
 // nothing to tailoring, which only needs to know what the job requires.
 var boilerplatePrefixes = []string{
 	"who we are",
-	"about us",
-	"about the company",
+	// Covers "About Stripe", "About us", "About the team". Real postings head
+	// their company and team blurbs this way, and matching only "about us" left
+	// several thousand characters of it in place. Role-specific "about"
+	// headings are excluded below.
+	"about",
 	"our mission",
 	"why join",
 	"life at",
@@ -206,6 +219,20 @@ func isBoilerplate(paragraph string) bool {
 	}
 
 	firstLine = strings.Trim(firstLine, " :–-—#*")
+
+	// "About the role" and friends describe the job itself, so they are the one
+	// family of "about" headings worth keeping.
+	for _, keep := range []string{
+		"about the role",
+		"about this role",
+		"about the job",
+		"about the position",
+		"about the opportunity",
+	} {
+		if strings.HasPrefix(firstLine, keep) {
+			return false
+		}
+	}
 
 	for _, prefix := range boilerplatePrefixes {
 		if strings.HasPrefix(firstLine, prefix) {

@@ -164,3 +164,72 @@ func TestTrimJobDescriptionHandlesSingleOversizedParagraph(t *testing.T) {
 		t.Fatal("expected a hard prefix rather than an empty result")
 	}
 }
+
+// "About <Company>" is the commonest boilerplate heading in real postings and was
+// initially unmatched, which left the entire company blurb and every other team's
+// description in the prompt.
+func TestTrimJobDescriptionDropsAboutCompanySections(t *testing.T) {
+	text := strings.Join([]string{
+		"Who we are",
+		"About Stripe",
+		"Stripe is a financial infrastructure platform for businesses.",
+		"About the team",
+		"Our mission is to enable effective financial decisions.",
+		"Seller Systems — Responsible for building seller tooling.",
+		"Responsibilities",
+		"Design and maintain high-performance APIs in Go.",
+		"Minimum requirements",
+		"Four years of backend experience.",
+	}, "\n\n")
+
+	got := TrimJobDescription(text, 6000)
+
+	for _, unwanted := range []string{
+		"financial infrastructure platform",
+		"effective financial decisions",
+		"Seller Systems",
+	} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("boilerplate body %q survived: %q", unwanted, got)
+		}
+	}
+
+	for _, want := range []string{
+		"high-performance APIs in Go",
+		"Four years of backend experience",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("required content %q was dropped: %q", want, got)
+		}
+	}
+}
+
+// "About the role" describes the job, so unlike "About Stripe" it must survive.
+func TestTrimJobDescriptionKeepsAboutTheRole(t *testing.T) {
+	text := strings.Join([]string{
+		"About the role",
+		"You will own the payments ingestion pipeline end to end.",
+		"Requirements",
+		"Strong Go and Kafka experience.",
+	}, "\n\n")
+
+	got := TrimJobDescription(text, 6000)
+
+	if !strings.Contains(got, "payments ingestion pipeline") {
+		t.Fatalf("about-the-role body was dropped: %q", got)
+	}
+}
+
+// Tag stripping leaves a leading space on most lines, which would defeat prefix
+// matching on headings.
+func TestNormalizeJobDescriptionTrimsLineIndentation(t *testing.T) {
+	raw := "&lt;h3&gt;About Stripe&lt;/h3&gt;&lt;p&gt;We build things.&lt;/p&gt;"
+
+	got := NormalizeJobDescription(raw)
+
+	for _, line := range strings.Split(got, "\n") {
+		if line != strings.TrimSpace(line) {
+			t.Fatalf("line retains padding: %q", line)
+		}
+	}
+}
