@@ -405,14 +405,27 @@ func runJobsList(db *database.DB) {
 
 	repository := job.NewSQLiteRepository(db)
 
-	jobs, err := repository.List(ctx, 20)
+	const listLimit = 20
+
+	jobs, err := repository.List(ctx, listLimit)
 	if err != nil {
 		log.Fatalf("list jobs: %v", err)
 	}
 
 	fmt.Println("JobClaw Jobs")
 	fmt.Println("────────────────────────────")
-	fmt.Printf("Stored jobs: %d\n\n", len(jobs))
+
+	// Report this as a page, not a total. The previous wording, "Stored jobs:
+	// %d" against len(jobs), read as the whole table while only ever showing the
+	// first 20, which made a database of several hundred look like twenty.
+	// Use `jobclaw status` for real counts.
+	fmt.Printf("Showing up to %d jobs\n", listLimit)
+
+	if len(jobs) == listLimit {
+		fmt.Println("There may be more; run `jobclaw status` for totals.")
+	}
+
+	fmt.Println()
 
 	for i, j := range jobs {
 		fmt.Printf(
