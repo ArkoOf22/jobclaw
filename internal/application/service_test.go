@@ -79,6 +79,8 @@ func TestCreateForApprovedJob(t *testing.T) {
 	db, jobRepo, _, service := setupApplicationServiceTest(t)
 	defer db.Close()
 
+	useTempWorkingDir(t)
+
 	ctx := context.Background()
 
 	jobID := createTestJob(
@@ -158,6 +160,8 @@ func TestCreateForApprovedJobDoesNotDuplicate(t *testing.T) {
 	db, jobRepo, appRepo, service := setupApplicationServiceTest(t)
 	defer db.Close()
 
+	useTempWorkingDir(t)
+
 	ctx := context.Background()
 
 	jobID := createTestJob(
@@ -200,6 +204,28 @@ func TestCreateForApprovedJobDoesNotDuplicate(t *testing.T) {
 	}
 }
 
+// useTempWorkingDir points the process at a throwaway directory for the test.
+//
+// Application workspaces are created relative to the working directory, so
+// without this, tests write data/applications/... into the source tree. Leftover
+// files there can mask or unmask failures on later runs.
+func useTempWorkingDir(t *testing.T) {
+	t.Helper()
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatalf("chdir to temp working directory: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+}
+
 // flakyResumeGenerator fails a configurable number of times before succeeding,
 // so a transient LLM outage can be simulated.
 type flakyResumeGenerator struct {
@@ -227,6 +253,8 @@ func (g *flakyResumeGenerator) GenerateTailoredResume(
 func TestCreateForApprovedJobWithoutResumeGenerator(t *testing.T) {
 	db, jobRepo, _, _ := setupApplicationServiceTest(t)
 	defer db.Close()
+
+	useTempWorkingDir(t)
 
 	ctx := context.Background()
 
@@ -276,21 +304,7 @@ func TestEnsureTailoredResumeRecoversAfterFailure(t *testing.T) {
 
 	ctx := context.Background()
 
-	workspace := t.TempDir()
-
-	originalWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get working directory: %v", err)
-	}
-
-	// Workspaces are created relative to the process working directory.
-	if err := os.Chdir(workspace); err != nil {
-		t.Fatalf("chdir to temp workspace: %v", err)
-	}
-
-	t.Cleanup(func() {
-		_ = os.Chdir(originalWD)
-	})
+	useTempWorkingDir(t)
 
 	generator := &flakyResumeGenerator{
 		failures: 1,
@@ -384,20 +398,7 @@ func TestEnsureTailoredResumeIsIdempotent(t *testing.T) {
 
 	ctx := context.Background()
 
-	workspace := t.TempDir()
-
-	originalWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get working directory: %v", err)
-	}
-
-	if err := os.Chdir(workspace); err != nil {
-		t.Fatalf("chdir to temp workspace: %v", err)
-	}
-
-	t.Cleanup(func() {
-		_ = os.Chdir(originalWD)
-	})
+	useTempWorkingDir(t)
 
 	generator := &flakyResumeGenerator{
 		delegate: NewMockResumeGenerator(),
@@ -452,20 +453,7 @@ func TestEnsureTailoredResumeRegeneratesMissingFile(t *testing.T) {
 
 	ctx := context.Background()
 
-	workspace := t.TempDir()
-
-	originalWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get working directory: %v", err)
-	}
-
-	if err := os.Chdir(workspace); err != nil {
-		t.Fatalf("chdir to temp workspace: %v", err)
-	}
-
-	t.Cleanup(func() {
-		_ = os.Chdir(originalWD)
-	})
+	useTempWorkingDir(t)
 
 	generator := &flakyResumeGenerator{
 		delegate: NewMockResumeGenerator(),
