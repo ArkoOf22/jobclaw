@@ -654,3 +654,88 @@ func TestApplicationSubmissionRejectsNonApprovedJob(t *testing.T) {
 		)
 	}
 }
+
+// An ambiguous outcome must be identifiable via errors.Is rather than by string
+// matching. Callers that cannot distinguish it will report "nothing was
+// submitted" for a request that may have reached the employer, which is how
+// duplicate applications get sent.
+func TestAmbiguousSubmissionErrorIsIdentifiable(t *testing.T) {
+	applications, jobs := newSubmissionFixture()
+
+	submitter := &fakeApplicationSubmitter{
+		result: SubmissionAmbiguous,
+		err:    errors.New("network timeout after remote acceptance"),
+	}
+
+	factory := &fakeSubmissionTransactionFactory{
+		transactions: []*fakeSubmissionTransaction{
+			{},
+		},
+	}
+
+	service := NewApplicationSubmissionService(
+		applications,
+		jobs,
+		&fakeEventRepository{},
+		submitter,
+	)
+	service.SetTransactionFactory(factory)
+
+	err := service.Submit(context.Background(), 100)
+	if err == nil {
+		t.Fatal("expected an error for an ambiguous submission")
+	}
+
+	if !errors.Is(err, ErrSubmissionAmbiguous) {
+		t.Fatalf(
+			"error %v does not wrap ErrSubmissionAmbiguous",
+			err,
+		)
+	}
+}
+
+// Retrying an application already locked in SUBMISSION_IN_PROGRESS is also an
+// ambiguous case and must be reported as such, not as a generic failure.
+func TestRetryAfterAmbiguousAttemptIsIdentifiable(t *testing.T) {
+	applications, jobs := newSubmissionFixture()
+
+	// Simulate an application already locked by a prior unresolved attempt.
+	applications.applications[100].Status = StatusSubmissionInProgress
+
+	submitter := &fakeApplicationSubmitter{
+		result: SubmissionSucceeded,
+	}
+
+	factory := &fakeSubmissionTransactionFactory{
+		transactions: []*fakeSubmissionTransaction{
+			{},
+		},
+	}
+
+	service := NewApplicationSubmissionService(
+		applications,
+		jobs,
+		&fakeEventRepository{},
+		submitter,
+	)
+	service.SetTransactionFactory(factory)
+
+	err := service.Submit(context.Background(), 100)
+	if err == nil {
+		t.Fatal("expected a retry of a locked application to be rejected")
+	}
+
+	if !errors.Is(err, ErrSubmissionAmbiguous) {
+		t.Fatalf(
+			"error %v does not wrap ErrSubmissionAmbiguous",
+			err,
+		)
+	}
+
+	if submitter.submissions != 0 {
+		t.Fatalf(
+			"submissions = %d, want 0; a locked application must not resubmit",
+			submitter.submissions,
+		)
+	}
+}

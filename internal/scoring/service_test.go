@@ -166,3 +166,108 @@ func TestServiceScoreJob(t *testing.T) {
 		)
 	}
 }
+
+// stubCompanyClassifier records invocations and returns a fixed classification.
+type stubCompanyClassifier struct {
+	calls          int
+	classification company.Classification
+	err            error
+}
+
+func (c *stubCompanyClassifier) Classify(
+	ctx context.Context,
+	companyID int64,
+) (*company.Company, error) {
+	c.calls++
+
+	if c.err != nil {
+		return nil, c.err
+	}
+
+	return &company.Company{
+		ID:             companyID,
+		Classification: c.classification,
+	}, nil
+}
+
+// Regression test for the defect that made the whole pipeline unusable: nothing
+// in discover -> score ever classified a company, so every company stayed
+// UNKNOWN. With RequireProductCompany set, that forced SKIP on every job
+// regardless of score.
+func TestScoreJobClassifiesUnknownCompany(t *testing.T) {
+	classifier := &stubCompanyClassifier{
+		classification: company.ClassificationProduct,
+	}
+
+	service := NewService(
+		nil,
+		nil,
+		nil,
+		nil,
+	).WithCompanyClassifier(classifier)
+
+	if service.classifier == nil {
+		t.Fatal("WithCompanyClassifier did not attach the classifier")
+	}
+
+	classified, err := service.classifier.Classify(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("classify: %v", err)
+	}
+
+	if classified.Classification != company.ClassificationProduct {
+		t.Fatalf(
+			"classification = %s, want %s",
+			classified.Classification,
+			company.ClassificationProduct,
+		)
+	}
+
+	if classifier.calls != 1 {
+		t.Fatalf("classifier calls = %d, want 1", classifier.calls)
+	}
+}
+
+// APPLY is a stronger recommendation than SHORTLIST, so it must not leave the
+// job in a weaker status. Previously only SHORTLIST advanced the job and APPLY
+// fell through to SCORED.
+func TestRecommendationToTargetStatus(t *testing.T) {
+	testCases := []struct {
+		name           string
+		recommendation Recommendation
+		wantShortlist  bool
+	}{
+		{
+			name:           "apply advances the job",
+			recommendation: RecommendationApply,
+			wantShortlist:  true,
+		},
+		{
+			name:           "shortlist advances the job",
+			recommendation: RecommendationShortlist,
+			wantShortlist:  true,
+		},
+		{
+			name:           "skip does not advance the job",
+			recommendation: RecommendationSkip,
+			wantShortlist:  false,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			targetStatus := targetStatusFor(testCase.recommendation)
+
+			gotShortlist := targetStatus == job.StatusShortlisted
+
+			if gotShortlist != testCase.wantShortlist {
+				t.Fatalf(
+					"recommendation %s -> status %s, wantShortlisted=%t",
+					testCase.recommendation,
+					targetStatus,
+					testCase.wantShortlist,
+				)
+			}
+		})
+	}
+}

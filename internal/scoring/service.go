@@ -54,6 +54,20 @@ func (s *Service) WithCompanyClassifier(
 	return s
 }
 
+// targetStatusFor maps a recommendation to the job status it should advance to.
+//
+// APPLY is a stronger recommendation than SHORTLIST and must not leave the job
+// in a weaker status. Previously only SHORTLIST advanced the job while APPLY
+// fell through to SCORED, so the best matches ranked below merely-good ones.
+func targetStatusFor(recommendation Recommendation) job.Status {
+	switch recommendation {
+	case RecommendationApply, RecommendationShortlist:
+		return job.StatusShortlisted
+	default:
+		return job.StatusScored
+	}
+}
+
 func (s *Service) ScoreJob(
 	ctx context.Context,
 	jobID int64,
@@ -111,16 +125,7 @@ func (s *Service) ScoreJob(
 		return nil, fmt.Errorf("persist score: %w", err)
 	}
 
-	targetStatus := job.StatusScored
-
-	// APPLY is a stronger recommendation than SHORTLIST, so it must not leave
-	// the job in a weaker status. Previously only SHORTLIST advanced the job
-	// and APPLY fell through to SCORED, meaning the best matches ranked below
-	// merely-good ones.
-	if result.Recommendation == RecommendationShortlist ||
-		result.Recommendation == RecommendationApply {
-		targetStatus = job.StatusShortlisted
-	}
+	targetStatus := targetStatusFor(result.Recommendation)
 
 	if j.Status != targetStatus &&
 		job.CanTransition(j.Status, targetStatus) {
