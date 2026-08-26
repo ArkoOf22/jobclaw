@@ -46,7 +46,15 @@ jobclaw-agent questionnaire <app_id> --from-greenhouse
 jobclaw-agent questionnaire <app_id> # re-resolve answers only
 jobclaw-agent prepare <app_id>       # validate readiness
 jobclaw-agent submit <app_id>        # PREVIEW ONLY
+
+jobclaw-agent sheet sync             # add new shortlisted jobs to the sheet
 ```
+
+The review sheet is the shared source of record Arkodeep reads on his phone:
+https://docs.google.com/spreadsheets/d/1x38Aj46Dz1XQphTV1gjXUZNuIFXpexXvDhttzBNfl-4/edit
+
+Row numbers in the sheet are not job IDs. The first column is the job ID; use that
+when calling commands, and refer to jobs by company and title when talking to him.
 
 Anything not listed is refused by the wrapper.
 

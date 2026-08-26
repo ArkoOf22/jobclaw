@@ -109,6 +109,13 @@ answers)
     exec "${BINARY}" answer list
     ;;
 
+# Appends newly shortlisted jobs to the review sheet. Safe for the agent: it only
+# adds rows, and `sheet init` is excluded so it cannot rewrite the header.
+sheet)
+    [[ "${1:-}" == "sync" ]] || die "only 'sheet sync' is permitted"
+    exec "${BINARY}" sheet sync
+    ;;
+
 # --- State-changing, but reversible and local ---
 approve | reject)
     require_positive_int "${1:-}"
