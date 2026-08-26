@@ -110,21 +110,61 @@ func (s *Scorer) Score(
 		s.preferences.Compensation,
 	)
 
-	// Component scores add up to a maximum of 110.
-	// Normalize the final score to a 0-100 scale so that
-	// JobQuality thresholds remain intuitive.
-	rawScore := skills +
-		candidateSkills +
-		role +
-		experience +
-		domain +
-		candidateDomain +
-		location +
-		companyScore +
-		compensation
+	// Normalize over the signals actually present rather than a fixed 100.
+	//
+	// Absence of evidence was previously scored as mediocre evidence: a job with
+	// no salary data still consumed the full 10-point compensation slot while
+	// only ever earning 5. Greenhouse never publishes salary, so every job
+	// sourced from it was capped roughly 5 points below what the thresholds
+	// assume, and the same applied to an unclassified company and to
+	// descriptions from which no required skills or domains could be parsed.
+	//
+	// Excluding an unavailable signal from both numerator and denominator keeps
+	// the score comparable across sources, so thresholds stay meaningful.
+	signals := []scoreSignal{
+		{value: skills, max: maxSkillsScore, available: true},
+		{
+			value:     candidateSkills,
+			max:       maxCandidateSkillsScore,
+			available: candidateMatch.RequiredSkills > 0,
+		},
+		{value: role, max: maxRoleScore, available: true},
+		{value: experience, max: maxExperienceScore, available: true},
+		{value: domain, max: maxDomainScore, available: true},
+		{
+			value:     candidateDomain,
+			max:       maxCandidateDomainScore,
+			available: candidateMatch.RequiredDomains > 0,
+		},
+		{value: location, max: maxLocationScore, available: true},
+		{
+			value:     companyScore,
+			max:       maxCompanyScore,
+			available: c.Classification != company.ClassificationUnknown,
+		},
+		{
+			value:     compensation,
+			max:       maxCompensationScore,
+			available: j.SalaryMin != nil || j.SalaryMax != nil,
+		},
+	}
 
-	const maxRawScore = 100.0
-	overall := (rawScore / maxRawScore) * 100.0
+	rawScore, maxRawScore := accumulateSignals(signals)
+
+	overall := 0.0
+
+	if maxRawScore > 0 {
+		overall = (rawScore / maxRawScore) * 100.0
+	}
+
+	// Name the excluded signals. Without this the breakdown still lists a value
+	// for a component that did not count, which reads as though it contributed.
+	excluded := excludedSignalNames(
+		candidateMatch,
+		c.Classification,
+		j.SalaryMin,
+		j.SalaryMax,
+	)
 
 	recommendation := RecommendationSkip
 
@@ -135,8 +175,19 @@ func (s *Scorer) Score(
 		recommendation = RecommendationShortlist
 	}
 
+	// Veto only on a positive determination that this is a services company.
+	//
+	// Vetoing on anything that is not PRODUCT also rejected UNKNOWN, and UNKNOWN
+	// is the norm rather than the exception: classification is derived from the
+	// job descriptions stored for a company, and most companies contribute a
+	// single posting. A genuine 71.2-scoring backend role was being silently
+	// skipped purely because one description carried too little evidence.
+	//
+	// This also keeps the policy consistent with normalization, which already
+	// excludes an unclassified company instead of penalizing it. Absence of
+	// evidence is not evidence against.
 	if s.preferences.CompanyType.RequireProductCompany &&
-		c.Classification != company.ClassificationProduct {
+		c.Classification == company.ClassificationServices {
 		recommendation = RecommendationSkip
 	}
 
@@ -160,7 +211,7 @@ func (s *Scorer) Score(
 		CompensationScore:    compensation,
 		Recommendation:       recommendation,
 		Reasoning: fmt.Sprintf(
-			"skills=%.1f candidate_skills=%.1f role=%.1f experience=%.1f domain=%.1f candidate_domain=%.1f location=%.1f company=%.1f compensation=%.1f candidate_skills_match=%d/%d candidate_domain_match=%d/%d",
+			"skills=%.1f candidate_skills=%.1f role=%.1f experience=%.1f domain=%.1f candidate_domain=%.1f location=%.1f company=%.1f compensation=%.1f candidate_skills_match=%d/%d candidate_domain_match=%d/%d excluded=[%s] normalized_over=%.1f",
 			skills,
 			candidateSkills,
 			role,
@@ -174,6 +225,77 @@ func (s *Scorer) Score(
 			candidateMatch.RequiredSkills,
 			candidateMatch.MatchedDomains,
 			candidateMatch.RequiredDomains,
+			strings.Join(excluded, ","),
+			maxRawScore,
 		),
 	}
+}
+
+// Component maximums. These must stay in sync with the corresponding score
+// functions in rules.go, and are the denominator contributions used when a
+// signal is present.
+const (
+	maxSkillsScore          = 20.0
+	maxCandidateSkillsScore = 10.0
+	maxRoleScore            = 15.0
+	maxExperienceScore      = 15.0
+	maxDomainScore          = 10.0
+	maxCandidateDomainScore = 5.0
+	maxLocationScore        = 10.0
+	maxCompanyScore         = 5.0
+	maxCompensationScore    = 10.0
+)
+
+// scoreSignal is one scoring component together with whether the underlying
+// evidence was actually available.
+type scoreSignal struct {
+	value     float64
+	max       float64
+	available bool
+}
+
+// accumulateSignals totals the available signals and the maximum they could have
+// reached, so the caller can normalize over real evidence only.
+func accumulateSignals(signals []scoreSignal) (float64, float64) {
+	var total, maximum float64
+
+	for _, signal := range signals {
+		if !signal.available {
+			continue
+		}
+
+		total += signal.value
+		maximum += signal.max
+	}
+
+	return total, maximum
+}
+
+// excludedSignalNames lists the components left out of normalization because the
+// evidence they depend on was not present in the job posting.
+func excludedSignalNames(
+	match CandidateMatch,
+	classification company.Classification,
+	salaryMin *int,
+	salaryMax *int,
+) []string {
+	var excluded []string
+
+	if match.RequiredSkills == 0 {
+		excluded = append(excluded, "candidate_skills")
+	}
+
+	if match.RequiredDomains == 0 {
+		excluded = append(excluded, "candidate_domain")
+	}
+
+	if classification == company.ClassificationUnknown {
+		excluded = append(excluded, "company")
+	}
+
+	if salaryMin == nil && salaryMax == nil {
+		excluded = append(excluded, "compensation")
+	}
+
+	return excluded
 }

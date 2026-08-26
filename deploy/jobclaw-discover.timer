@@ -1,0 +1,22 @@
+[Unit]
+Description=Run JobClaw discovery and scoring periodically
+Documentation=https://github.com/ArkoOf22/jobclaw
+
+[Timer]
+# Every six hours. Job boards do not turn over fast enough to justify more, and
+# scraping them harder invites rate limiting and IP blocks.
+OnCalendar=*-*-* 00,06,12,18:00:00
+OnCalendarTimezone=Asia/Kolkata
+
+# Spread the start so requests do not land on the hour alongside every other
+# scraper.
+RandomizedDelaySec=20min
+
+# Run once shortly after boot if a scheduled window was missed while the instance
+# was down, rather than waiting for the next one.
+Persistent=true
+
+Unit=jobclaw-discover.service
+
+[Install]
+WantedBy=timers.target

@@ -124,23 +124,10 @@ func (s *Service) CreateForApprovedJob(
 		return existing, nil
 	}
 
-	root, err := ensureApplicationWorkspace(jobID)
-	if err != nil {
+	if _, err := ensureApplicationWorkspace(jobID); err != nil {
 		return nil, err
 	}
 
-	if s.resume == nil {
-		return nil, fmt.Errorf("resume generator is not configured")
-	}
-
-	resumePath := filepath.Join(
-		root,
-		"resume",
-		"tailored_resume.txt",
-	)
-
-	// Create the application before generation so every lifecycle event
-	// has a valid application ID.
 	app := Application{
 		JobID:  jobID,
 		Status: StatusDraft,
@@ -170,9 +157,69 @@ func (s *Service) CreateForApprovedJob(
 		},
 	)
 
+	return created, nil
+}
+
+// EnsureTailoredResume generates the tailored resume for an existing
+// application, and is safe to call repeatedly.
+//
+// This is deliberately separate from CreateForApprovedJob. The two were fused,
+// which produced an unrecoverable state: the application row was created first,
+// so when resume generation failed the caller got an error while the row
+// persisted. The next attempt then matched the "application already exists"
+// branch and returned success without ever generating the resume, leaving the
+// application permanently resume-less while reporting success.
+//
+// Splitting them means workspace creation no longer depends on the LLM being
+// reachable, and a failed resume can simply be retried.
+func (s *Service) EnsureTailoredResume(
+	ctx context.Context,
+	jobID int64,
+) (string, error) {
+	if jobID <= 0 {
+		return "", fmt.Errorf("job ID must be positive")
+	}
+
+	if s.resume == nil {
+		return "", fmt.Errorf("resume generator is not configured")
+	}
+
+	app, err := s.applications.GetByJobID(ctx, jobID)
+	if err != nil {
+		return "", fmt.Errorf("load application: %w", err)
+	}
+
+	if app == nil {
+		return "", fmt.Errorf(
+			"no application exists for job %d; create it first",
+			jobID,
+		)
+	}
+
+	root, err := ensureApplicationWorkspace(jobID)
+	if err != nil {
+		return "", err
+	}
+
+	resumePath := filepath.Join(
+		root,
+		"resume",
+		"tailored_resume.txt",
+	)
+
+	// Treat a recorded path whose file is missing as not generated, so a
+	// deleted or truncated artifact is regenerated rather than trusted.
+	if app.TailoredResumePath != "" {
+		if info, statErr := os.Stat(
+			app.TailoredResumePath,
+		); statErr == nil && info.Size() > 0 {
+			return app.TailoredResumePath, nil
+		}
+	}
+
 	_ = s.recordEvent(
 		ctx,
-		created.ID,
+		app.ID,
 		EventResumeGenerationStarted,
 		map[string]any{
 			"job_id": jobID,
@@ -186,50 +233,41 @@ func (s *Service) CreateForApprovedJob(
 	); err != nil {
 		_ = s.recordEvent(
 			ctx,
-			created.ID,
+			app.ID,
 			EventResumeGenerationFailed,
 			map[string]any{
 				"error": err.Error(),
 			},
 		)
 
-		return nil, fmt.Errorf("generate tailored resume: %w", err)
+		return "", fmt.Errorf("generate tailored resume: %w", err)
 	}
 
 	if err := s.applications.UpdateTailoredResumePath(
 		ctx,
-		created.ID,
+		app.ID,
 		resumePath,
 	); err != nil {
 		_ = s.recordEvent(
 			ctx,
-			created.ID,
+			app.ID,
 			EventResumeGenerationFailed,
 			map[string]any{
 				"error": err.Error(),
 			},
 		)
 
-		return nil, fmt.Errorf("update tailored resume path: %w", err)
+		return "", fmt.Errorf("update tailored resume path: %w", err)
 	}
 
 	_ = s.recordEvent(
 		ctx,
-		created.ID,
+		app.ID,
 		EventResumeGenerationSucceeded,
 		map[string]any{
 			"resume_path": resumePath,
 		},
 	)
 
-	created, err = s.applications.GetByJobID(ctx, jobID)
-	if err != nil {
-		return nil, fmt.Errorf("load updated application: %w", err)
-	}
-
-	if created == nil {
-		return nil, fmt.Errorf("application was updated but could not be loaded")
-	}
-
-	return created, nil
+	return resumePath, nil
 }

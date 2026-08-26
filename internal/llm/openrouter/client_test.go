@@ -286,3 +286,123 @@ func TestClientGenerateHonorsCancelledContext(t *testing.T) {
 		t.Fatal("expected cancellation error")
 	}
 }
+
+func TestClientGenerateSendsProviderPrivacyPreferences(t *testing.T) {
+	testCases := []struct {
+		name                     string
+		denyDataCollection       bool
+		requireZeroDataRetention bool
+		wantProvider             bool
+		wantDataCollection       string
+		wantZDR                  bool
+	}{
+		{
+			name:                     "omitted when unrestricted",
+			denyDataCollection:       false,
+			requireZeroDataRetention: false,
+			wantProvider:             false,
+		},
+		{
+			name:                     "deny data collection only",
+			denyDataCollection:       true,
+			requireZeroDataRetention: false,
+			wantProvider:             true,
+			wantDataCollection:       "deny",
+			wantZDR:                  false,
+		},
+		{
+			name:                     "zero data retention only",
+			denyDataCollection:       false,
+			requireZeroDataRetention: true,
+			wantProvider:             true,
+			wantDataCollection:       "",
+			wantZDR:                  true,
+		},
+		{
+			name:                     "both restrictions",
+			denyDataCollection:       true,
+			requireZeroDataRetention: true,
+			wantProvider:             true,
+			wantDataCollection:       "deny",
+			wantZDR:                  true,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var request chatRequest
+
+			server := httptest.NewServer(
+				http.HandlerFunc(
+					func(w http.ResponseWriter, r *http.Request) {
+						if err := json.NewDecoder(r.Body).
+							Decode(&request); err != nil {
+							t.Fatalf("decode request: %v", err)
+						}
+
+						w.Header().Set(
+							"Content-Type",
+							"application/json",
+						)
+						_, _ = w.Write([]byte(
+							`{"choices":[{"message":{"content":"ok"}}]}`,
+						))
+					},
+				),
+			)
+			defer server.Close()
+
+			client, err := NewClient(
+				Config{
+					APIKey:                   "test-key",
+					Model:                    "test-model",
+					BaseURL:                  server.URL + "/api/v1",
+					DenyDataCollection:       testCase.denyDataCollection,
+					RequireZeroDataRetention: testCase.requireZeroDataRetention,
+				},
+			)
+			if err != nil {
+				t.Fatalf("new client: %v", err)
+			}
+
+			if _, err := client.Generate(
+				context.Background(),
+				"tailor this resume",
+			); err != nil {
+				t.Fatalf("generate: %v", err)
+			}
+
+			if !testCase.wantProvider {
+				if request.Provider != nil {
+					t.Fatalf(
+						"provider = %+v, want omitted",
+						request.Provider,
+					)
+				}
+
+				return
+			}
+
+			if request.Provider == nil {
+				t.Fatal("provider is nil, want preferences sent")
+			}
+
+			if request.Provider.DataCollection !=
+				testCase.wantDataCollection {
+				t.Fatalf(
+					"data_collection = %q, want %q",
+					request.Provider.DataCollection,
+					testCase.wantDataCollection,
+				)
+			}
+
+			if request.Provider.ZDR != testCase.wantZDR {
+				t.Fatalf(
+					"zdr = %v, want %v",
+					request.Provider.ZDR,
+					testCase.wantZDR,
+				)
+			}
+		})
+	}
+}

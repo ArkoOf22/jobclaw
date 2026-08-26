@@ -1,0 +1,164 @@
+# Proposed replacement for ~/.kiro/settings/permissions.yaml
+#
+# The agent cannot write this file: Kiro's hardcoded scope denies agent writes
+# to ~/.kiro/settings/. That is deliberate, so an agent cannot grant itself
+# permissions. Install it manually.
+#
+# ---------------------------------------------------------------------------
+# WHY THE CURRENT FILE IS A PROBLEM
+# ---------------------------------------------------------------------------
+#
+# 1. It contains a live Postgres password in an allow pattern
+#    (`PGPASSWORD=... *`), in a file that is mode 644 and therefore readable by
+#    any local user. Remove it and rotate that password. Use ~/.pgpass with
+#    mode 600, or an environment variable, instead of embedding it here.
+#
+# 2. `cat *` + `curl *` together are a silent read-and-exfiltrate path. `cat *`
+#    reads any file on disk without prompting, including ~/.aws/credentials,
+#    *.pem, and .env. `curl *` then sends it anywhere, also without prompting.
+#    Neither .kiroignore nor fs_read deny rules stop this, because shell is a
+#    separate capability. This is the single biggest hole.
+#
+# 3. `chmod *` and `ln *` can weaken file permissions or redirect paths.
+#    `npm *`, `docker *`, `brew *`, and `go *` all execute arbitrary
+#    third-party code by design.
+#
+# ---------------------------------------------------------------------------
+# THE TRADEOFF, STATED HONESTLY
+# ---------------------------------------------------------------------------
+#
+# Tightening this means more approval prompts. `curl` moving from allow to ask
+# is the one you will notice most. Deny rules override allow rules in every
+# scope, so the deny list below still applies even to commands that match an
+# allow pattern.
+#
+# ---------------------------------------------------------------------------
+
+rules:
+  # ===================================================================
+  # DENY — evaluated first, overrides every allow rule below.
+  # Compound commands are split on ; && || | and each part is checked
+  # independently, so `ls ; cat ~/.aws/credentials` is caught.
+  # ===================================================================
+
+  - capability: fs_read
+    match:
+      - "**/.env"
+      - "**/.env.*"
+      - "**/*.pem"
+      - "**/*.key"
+      - "**/secrets/**"
+      - "**/credentials.json"
+      - "**/.aws/**"
+      - "**/.ssh/id_*"
+      - "**/.pgpass"
+    effect: deny
+
+  - capability: shell
+    match:
+      # Reading secrets through the shell, bypassing fs_read and .kiroignore.
+      - "* .env*"
+      - "*.pem*"
+      - "*.aws/credentials*"
+      - "*.aws/config*"
+      - "*id_rsa*"
+      - "*id_ed25519*"
+      - "*.pgpass*"
+      - "*credentials.json*"
+      # Credential-bearing invocations.
+      - "PGPASSWORD=*"
+      - "*OPENROUTER_API_KEY=*"
+      - "*AWS_SECRET_ACCESS_KEY=*"
+      # Destructive or privilege-changing.
+      - "rm -rf *"
+      - "sudo rm *"
+      - "chmod 777 *"
+      - "* --no-verify*"
+      - "git push --force*"
+      - "git reset --hard*"
+      # Infrastructure with real blast radius.
+      - "aws ec2 authorize-security-group-ingress*"
+      - "aws iam *"
+      - "terraform apply*"
+      - "terraform destroy*"
+    effect: deny
+
+  # ===================================================================
+  # ASK — permitted, but prompts first.
+  # ===================================================================
+
+  - capability: shell
+    match:
+      # Was `curl *` on allow. This is the exfiltration path, so it should be a
+      # conscious decision each time. Add specific hosts to the allow list below
+      # if a particular endpoint gets tedious.
+      - curl *
+      - wget *
+      # Arbitrary third-party code execution.
+      - npm *
+      - npx *
+      - brew *
+      - docker *
+      - php *
+      # Filesystem mutation.
+      - chmod *
+      - ln *
+      - mv *
+      # Touches your running services and your mail pipeline.
+      - openclaw *
+      - gog *
+      # Cloud mutation. Read-only aws calls are on the allow list below.
+      - aws *
+      - gcloud *
+    effect: ask
+
+  # ===================================================================
+  # ALLOW — safe, high-frequency operations.
+  # ===================================================================
+
+  - capability: shell
+    match:
+      # Go toolchain. `go run`/`go generate` do execute code, but this is a Go
+      # project and gating them makes the agent unusable here.
+      - go *
+      - gofmt *
+      # Git and GitHub. Destructive variants are denied above.
+      - git *
+      - gh *
+      # Read-only inspection.
+      - ls *
+      - cat *
+      - head *
+      - tail *
+      - wc *
+      - grep *
+      - find *
+      - which *
+      - readlink *
+      - hash *
+      - file *
+      - stat *
+      - df *
+      - ps *
+      # Read-only AWS. Mutating calls fall through to `ask` above.
+      - aws sts get-caller-identity*
+      - aws ec2 describe-*
+      - aws ssm describe-*
+      - aws ssm get-command-invocation*
+      # Shell plumbing.
+      - cd *
+      - echo *
+      - mkdir *
+      - sleep *
+      - timeout *
+      - for *
+      - sed *
+      - python3 *
+      - ssh jobclaw *
+    effect: allow
+
+  - capability: web_fetch
+    effect: allow
+
+  - capability: web_search
+    effect: allow

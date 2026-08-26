@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 type QuestionnaireService struct {
@@ -73,6 +74,31 @@ func (s *QuestionnaireService) ProcessApplication(
 				Source:     question.AnswerSource,
 				Status:     ResolutionAnswered,
 				Reason:     "question is already approved",
+			})
+			continue
+		}
+
+		// Leave questions that already carry an answer alone.
+		//
+		// Re-resolving them is destructive: the resolver only knows the verified
+		// answer bank, so an answer produced by any other source resolves to
+		// NEEDS_REVIEW and gets wiped. Preparation re-runs this pipeline, which
+		// meant every `prepare` erased the answers the preceding
+		// `questionnaire` run had produced. Skipping them also keeps this
+		// idempotent and avoids repeat LLM calls on every invocation.
+		//
+		// Answers that are not candidate-verified are surfaced by the
+		// answer_provenance readiness check and in the submission dry run, so
+		// they still get human review before anything is sent.
+		if question.Status == QuestionAnswered &&
+			strings.TrimSpace(question.Answer) != "" {
+			resolutions = append(resolutions, AnswerResolution{
+				QuestionID: question.ID,
+				FieldKey:   question.FieldKey,
+				Answer:     question.Answer,
+				Source:     question.AnswerSource,
+				Status:     ResolutionAnswered,
+				Reason:     "question already has an answer",
 			})
 			continue
 		}

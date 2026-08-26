@@ -36,9 +36,10 @@ func (r *AnswerResolver) Resolve(
 	}
 
 	fieldKey := strings.TrimSpace(question.FieldKey)
+	semanticKey := classifyQuestionField(question.Question)
 
 	if fieldKey == "" {
-		fieldKey = classifyQuestionField(question.Question)
+		fieldKey = semanticKey
 	}
 
 	if fieldKey == "" {
@@ -61,6 +62,33 @@ func (r *AnswerResolver) Resolve(
 	answer, err := r.answers.GetByFieldKey(ctx, fieldKey)
 	if err != nil {
 		return AnswerResolution{}, fmt.Errorf("lookup candidate answer: %w", err)
+	}
+
+	// Fall back to the semantic key when the literal field key has no answer.
+	//
+	// ATS platforms name custom questions opaquely: Greenhouse uses IDs like
+	// "question_48620091" for "Are you authorized to work...". Matching only on
+	// the literal key would mean a verified answer works for exactly one
+	// employer's one form. Classifying the question text instead lets a single
+	// verified answer such as work_authorization apply everywhere.
+	if answer == nil &&
+		semanticKey != "" &&
+		semanticKey != fieldKey {
+		semanticAnswer, semanticErr := r.answers.GetByFieldKey(
+			ctx,
+			semanticKey,
+		)
+		if semanticErr != nil {
+			return AnswerResolution{}, fmt.Errorf(
+				"lookup candidate answer by semantic field: %w",
+				semanticErr,
+			)
+		}
+
+		if semanticAnswer != nil {
+			answer = semanticAnswer
+			fieldKey = semanticKey
+		}
 	}
 
 	if answer == nil {

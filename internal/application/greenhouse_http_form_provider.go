@@ -15,6 +15,40 @@ import (
 type GreenhouseHTTPFormProvider struct {
 	httpClient *http.Client
 	baseURL    string
+
+	boardToken string
+}
+
+// SetBoardToken supplies the Greenhouse board token explicitly instead of
+// deriving it from the job URL.
+//
+// Deriving it from the URL only works for greenhouse.io-hosted boards. Many
+// employers front their board on their own domain, for example
+// https://stripe.com/jobs/search?gh_jid=6042172, where the token is absent from
+// the URL entirely. The token is known at discovery time, so the caller can pass
+// it through rather than guess.
+func (p *GreenhouseHTTPFormProvider) SetBoardToken(token string) {
+	p.boardToken = strings.TrimSpace(token)
+}
+
+// resolveBoardToken prefers an explicitly supplied token and falls back to
+// parsing the job URL.
+func (p *GreenhouseHTTPFormProvider) resolveBoardToken(
+	j job.Job,
+) (string, error) {
+	if p.boardToken != "" {
+		return p.boardToken, nil
+	}
+
+	token, err := parseGreenhouseBoardToken(j.URL)
+	if err != nil {
+		return "", fmt.Errorf(
+			"%w; supply the board token explicitly for employer-hosted boards",
+			err,
+		)
+	}
+
+	return token, nil
 }
 
 func NewGreenhouseHTTPFormProvider(
@@ -89,7 +123,7 @@ func (p *GreenhouseHTTPFormProvider) GetApplicationForm(
 		)
 	}
 
-	boardToken, err := parseGreenhouseBoardToken(j.URL)
+	boardToken, err := p.resolveBoardToken(j)
 	if err != nil {
 		return GreenhouseApplicationForm{}, fmt.Errorf(
 			"resolve greenhouse board token: %w",

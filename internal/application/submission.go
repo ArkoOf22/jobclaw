@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -14,6 +15,17 @@ const (
 	SubmissionSucceeded SubmissionResult = "SUCCEEDED"
 	SubmissionFailed    SubmissionResult = "FAILED"
 	SubmissionAmbiguous SubmissionResult = "AMBIGUOUS"
+)
+
+// ErrSubmissionAmbiguous marks the case where the request may have reached the
+// external system but the outcome could not be confirmed. The application may
+// or may not have been submitted.
+//
+// This must be distinguishable by callers rather than inferred from an error
+// string: reporting an ambiguous outcome as a plain failure invites the operator
+// to resubmit, which is exactly how duplicate applications happen.
+var ErrSubmissionAmbiguous = errors.New(
+	"submission outcome is ambiguous",
 )
 
 type ApplicationSubmitter interface {
@@ -81,6 +93,18 @@ func (s *ApplicationSubmissionService) Submit(
 		return fmt.Errorf("application %d not found", applicationID)
 	}
 
+	// Check the ambiguous lock before the generic readiness check. A locked
+	// application also fails "not READY_TO_APPLY", and reporting it that way
+	// hides the only fact that matters: a previous attempt may already have
+	// reached the employer, so this must never look like a benign rejection.
+	if app.Status == StatusSubmissionInProgress {
+		return fmt.Errorf(
+			"application %d has an unresolved submission attempt; reconciliation is required: %w",
+			applicationID,
+			ErrSubmissionAmbiguous,
+		)
+	}
+
 	if app.Status != StatusReadyToApply {
 		return fmt.Errorf(
 			"application %d is not READY_TO_APPLY (status=%s)",
@@ -103,15 +127,6 @@ func (s *ApplicationSubmissionService) Submit(
 			"job %d is not APPROVED (status=%s)",
 			j.ID,
 			j.Status,
-		)
-	}
-
-	// A previous attempt may have already crossed the external-system
-	// boundary. Never blindly retry an ambiguous submission.
-	if app.Status == StatusSubmissionInProgress {
-		return fmt.Errorf(
-			"application %d has an ambiguous submission attempt; reconciliation is required",
-			applicationID,
 		)
 	}
 
@@ -175,8 +190,9 @@ func (s *ApplicationSubmissionService) Submit(
 
 	if result == SubmissionAmbiguous {
 		return fmt.Errorf(
-			"submission attempt %s is ambiguous; reconciliation is required",
+			"submission attempt %s could not be confirmed; reconciliation is required: %w",
 			attemptID,
+			ErrSubmissionAmbiguous,
 		)
 	}
 

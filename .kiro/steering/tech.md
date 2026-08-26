@@ -11,20 +11,18 @@
 
 Direct dependencies are few and deliberate. Prefer the standard library before adding anything new.
 
-## Toolchain requirement (read this first)
+## Where the code runs
 
-`go.mod` requires Go >= 1.26.5. The currently installed toolchain is **1.25.5** with
-`GOTOOLCHAIN=local`, so `go build`, `go vet`, and `go test` all fail immediately with:
+**Build and run on EC2, not locally.** See `environment.md` for access details. The EC2 host has
+Go 1.26.5, which is what `go.mod` requires.
 
-```
-go: go.mod requires go >= 1.26.5 (running go 1.25.5; GOTOOLCHAIN=local)
-```
-
-This is an environment gap, not a code problem. Resolve it before trusting any build or test result:
-install Go 1.26.5+, or unset `GOTOOLCHAIN=local` so Go can fetch the required toolchain automatically.
-Do not report tests as passing without an actual clean run.
+The local macOS checkout has Go 1.25.5 with `GOTOOLCHAIN=local`, so builds fail there with
+`go.mod requires go >= 1.26.5`. That is expected — the Mac is for editing, EC2 is for building.
+Do not "fix" it by downgrading `go.mod`.
 
 ## Commands
+
+Run these on the EC2 host, from `/home/openclaw/jobclaw` as the `openclaw` user:
 
 ```bash
 go build ./...
@@ -34,7 +32,9 @@ go test ./internal/application   # single package
 go test -run TestName ./internal/job
 ```
 
-`go test ./...` and `go vet ./...` were clean as of commit `a5b0edd`.
+Verified clean on EC2 at commit `a5b0edd`: build, vet, and the full test suite all pass.
+`internal/{application,company,config,database,discovery,discovery/greenhouse,discovery/jobspy,job,llm/openrouter,scoring}`
+all pass; `cmd/jobclaw` and the three `cmd*` helper packages have no test files.
 
 Live-network tests are opt-in and skip by default:
 
@@ -47,10 +47,56 @@ JOBCLAW_JOBSPY_LIVE_TEST=1 JOBCLAW_JOBSPY_URL=... go test ./internal/discovery/j
 `cmd/jobclaw/main.go` is the composition root and dispatches these subcommands:
 
 ```
-discover   jobs      score     shortlist   approve   reject
-application          answer {add, list, update}
-questionnaire        prepare   submit      resume     job
+discover   jobs list   score     shortlist   approve   reject
+application <jobID>    answer {add, list, update}
+questionnaire          prepare   submit      resume     job <id>
 ```
+
+### Submission is preview-by-default
+
+`jobclaw submit <id>` performs a **dry run**: it prints the target employer, the
+application state, the resolved questionnaire answers, and the configured
+targets, then exits without contacting anyone. Sending requires an explicit flag:
+
+```bash
+jobclaw submit 1            # preview only, nothing leaves the machine
+jobclaw submit 1 --confirm  # actually submits
+```
+
+Exit codes distinguish the outcomes that matter: `0` submitted or previewed,
+`1` not submitted with local state unchanged, `2` **ambiguous**. Ambiguous means
+the request may have reached the employer. Never resubmit on a `2`; the
+application stays locked in `SUBMISSION_IN_PROGRESS` pending manual
+reconciliation. Check `errors.Is(err, application.ErrSubmissionAmbiguous)` when
+handling this in code.
+
+### Commands that mutate live state
+
+`approve`, `reject`, `application`, `prepare`, `resume`, `submit --confirm`. Back
+up `data/jobclaw.db` or point `JOBCLAW_DB_PATH` at a scratch file when testing.
+
+### Commands that need `OPENROUTER_API_KEY`
+
+`resume` and `questionnaire`. `application` no longer requires it: the
+application and workspace are created regardless, and the resume is reported as
+PENDING and retried later with `jobclaw resume <jobID>`. `prepare` validates only
+and makes no network calls.
+
+### Questionnaire ingestion
+
+```bash
+jobclaw questionnaire <id> --from-greenhouse   # fetch the live form, no credentials
+jobclaw questionnaire <id> --source <path>     # ingest from a local text file
+jobclaw questionnaire <id>                     # resolve already-ingested questions
+```
+
+`--from-greenhouse` reads Greenhouse's public Job Board API. Only the POST
+submission endpoint requires auth, so `JOBCLAW_GREENHOUSE_BASE_URL` needs no
+secret and defaults to `https://boards-api.greenhouse.io/v1`.
+
+`JOBCLAW_GREENHOUSE_API_KEY` is issued by the **employer** for their own board. An
+applicant cannot obtain one, so automated Greenhouse submission is unavailable and
+`MANUAL` is the realistic terminal adapter.
 
 ## Environment variables
 
@@ -73,3 +119,60 @@ Note: `.env.example` is currently empty and does not document any of the above.
 `config/candidate.yaml`, `config/preferences.yaml`, `config/resume.yaml`. The resume config is where
 tailoring boundaries live — which transformations are permitted (rewording, reordering, skill
 selection) and which are forbidden (metric changes, invented experience).
+
+### Machine-readable state
+
+```bash
+jobclaw status          # human summary
+jobclaw status --json   # stable contract for orchestrators
+```
+
+`status --json` is the interface an orchestrator such as OpenClaw should use.
+Field names are snake_case and the shape is additive-only: new fields may appear,
+existing ones will not change meaning. It reports job counts by status and
+recommendation, application counts, the jobs awaiting a human approval decision,
+and the applications that cannot progress alone, each with the next command.
+
+Applications with an unresolved submission attempt appear with an empty
+`next_command`, because they must never be retried automatically.
+
+Note `jobs list` shows only the first 20 rows. Use `status` for real totals.
+
+### Scheduled discovery
+
+`jobclaw-discover.timer` runs discovery then scoring every six hours
+(00/06/12/18 IST, randomized up to 20 minutes, `Persistent=true` so a missed
+window catches up after downtime). It deliberately stops at scoring: approval is a
+human gate, so nothing past it happens unattended.
+
+```bash
+sudo systemctl list-timers jobclaw-discover.timer
+sudo systemctl start jobclaw-discover.service   # run one pass now
+journalctl -u jobclaw-discover -n 50
+```
+
+Units are version-controlled in `deploy/`; the wrapper is
+`scripts/scheduled-discovery.sh`, which rebuilds `bin/jobclaw` when any source
+file is newer so a deploy cannot silently keep running stale code.
+
+### Agent / Telegram control
+
+OpenClaw drives JobClaw through `scripts/jobclaw-agent`, a restricted wrapper, not
+the binary directly. The skill lives at `deploy/openclaw-skill/jobclaw/SKILL.md`
+and is installed to `~/.openclaw/workspace/skills/jobclaw/`.
+
+The wrapper enforces the submission gate structurally rather than relying on the
+agent to follow instructions: `--confirm` is rejected in every form, `submit` is
+always a dry run, arguments containing shell metacharacters are refused, and any
+subcommand not explicitly allowlisted is refused. Adding a new JobClaw command
+does not expose it to the agent until someone adds it here deliberately.
+
+Allowed: `status`, `shortlist`, `jobs list`, `job`, `answers`, `approve`,
+`reject`, `application`, `resume`, `questionnaire`, `prepare`, and `submit` as
+preview. Refused: `discover`, `score`, `answer add/update`, and anything else.
+
+Real submission stays with the human:
+
+```bash
+jobclaw submit <application_id> --confirm
+```

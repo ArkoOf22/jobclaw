@@ -1,0 +1,43 @@
+[Unit]
+# JobSpy MCP server: the second discovery source alongside Greenhouse.
+# JobClaw reaches it at http://127.0.0.1:8000/mcp (see defaultJobSpyURL).
+Description=JobSpy MCP server for JobClaw discovery
+Documentation=https://github.com/speedyapply/JobSpy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=openclaw
+Group=openclaw
+WorkingDirectory=/home/openclaw/jobspy-mcp
+
+# Bound to loopback by the server's own default. The HTTP endpoint is
+# unauthenticated unless JOBSPY_HTTP_TOKEN is set, so it must not be exposed
+# beyond localhost.
+ExecStart=/home/openclaw/jobspy-mcp/.venv/bin/jobspy-mcp-server --http --port 8000
+
+Environment=PYTHONUNBUFFERED=1
+
+Restart=on-failure
+RestartSec=10s
+
+StandardOutput=append:/home/openclaw/jobspy-mcp/logs/jobspy.log
+StandardError=append:/home/openclaw/jobspy-mcp/logs/jobspy.log
+
+# Hardening. This process scrapes third-party sites and parses untrusted HTML,
+# so it gets no more of the filesystem or privileges than it needs.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/openclaw/jobspy-mcp/logs
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
