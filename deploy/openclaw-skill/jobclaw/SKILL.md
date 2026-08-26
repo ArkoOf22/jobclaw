@@ -22,10 +22,10 @@ a job, a company he is applying to, a shortlist, a resume, or says he applied to
 something, use the commands below.
 
 Do not read or write any spreadsheet or CSV to answer a job question. In
-particular, ignore `~/.openclaw/workspace/job_tracker/` — `job_applications.csv`
-and `job_tracker_complete.xls` in that directory are a superseded manual tracker
-from before JobClaw existed. They are stale, they are not updated by anything, and
-answering from them gives him wrong information.
+particular, ignore `~/.openclaw/workspace/job_tracker.archived/` —
+`job_applications.csv` and `job_tracker_complete.xls` in that directory are a
+superseded manual tracker from before JobClaw existed. They are stale, nothing
+updates them, and answering from them gives him wrong information.
 
 The live record is JobClaw's database, surfaced two ways: `jobclaw-agent status
 --json` for you, and this Google Sheet for him:
@@ -37,6 +37,31 @@ filesystem for it. It may simply not have been discovered yet.
 Every command goes through `/home/openclaw/jobclaw/scripts/jobclaw-agent`. Do not
 call the `jobclaw` binary directly, and do not edit files under
 `/home/openclaw/jobclaw`.
+
+## Never answer a job question from memory
+
+Run the command every single time, even if you ran it earlier in this same
+conversation and think you remember the answer.
+
+Job IDs, scores, statuses and application IDs change without warning: discovery
+runs four times a day, re-scoring changes numbers, the queue gets reset, and jobs
+get deleted. Anything you read more than a few minutes ago is probably wrong now.
+
+Concretely, this is a bug, not a shortcut:
+
+> From the last check, you have 3 jobs awaiting approval: HireQuotient (67.1),
+> Google SDE II Payments (65.6), Kredivo (72.9)
+
+Every one of those jobs had been deleted, and HireQuotient had been re-scored to
+60.0 and dropped off the shortlist. Reporting remembered numbers with the
+confidence of fresh ones is worse than saying nothing, because he cannot tell the
+difference.
+
+If you catch yourself about to write "from the last check", "previously", or
+"as we saw earlier" about job data, stop and run the command instead.
+
+Never invent or guess an ID. If you need a job ID or application ID, read it out
+of fresh command output in this turn.
 
 ## The one rule
 

@@ -1615,6 +1615,20 @@ func runShortlist(db *database.DB) {
 
 	count := 0
 
+	// Jobs the candidate has already acted on, or that have moved past the
+	// review stage. The shortlist is a worklist, so a job stays on it only while
+	// there is still a decision to make about it. Scoring does not know any of
+	// this: a job keeps its SHORTLIST recommendation forever, which is why the
+	// filter lives here and not in the query.
+	settled := map[job.Status]bool{
+		job.StatusApplied:   true,
+		job.StatusRejected:  true,
+		job.StatusInterview: true,
+		job.StatusOffer:     true,
+	}
+
+	skipped := 0
+
 	for _, score := range scores {
 		if score.Recommendation != scoring.RecommendationShortlist &&
 			score.Recommendation != scoring.RecommendationApply {
@@ -1632,6 +1646,12 @@ func runShortlist(db *database.DB) {
 		}
 
 		if j == nil {
+			continue
+		}
+
+		if settled[j.Status] {
+			skipped++
+
 			continue
 		}
 
@@ -1659,7 +1679,16 @@ func runShortlist(db *database.DB) {
 	}
 
 	fmt.Println("────────────────────────────")
-	fmt.Printf("Shortlisted: %d\n", count)
+	fmt.Printf("Awaiting your decision: %d\n", count)
+
+	if skipped > 0 {
+		fmt.Printf("Already actioned (hidden): %d\n", skipped)
+	}
+
+	if count == 0 {
+		fmt.Println()
+		fmt.Println("Nothing to review. Discovery runs at 00/06/12/18 IST.")
+	}
 
 	if count > 0 {
 		fmt.Println()
