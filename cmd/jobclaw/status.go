@@ -98,7 +98,7 @@ func runStatus(
 		log.Fatalf("list applications: %v", err)
 	}
 
-	scoreByJob := make(map[int64]scoring.Result, len(scores))
+	scoreByJob := make(map[int64]scoring.StoredScore, len(scores))
 
 	for _, score := range scores {
 		scoreByJob[score.JobID] = score
@@ -225,10 +225,12 @@ func printStatusReport(report StatusReport) {
 
 	for _, status := range []job.Status{
 		job.StatusDiscovered,
-		job.StatusScoring,
 		job.StatusScored,
 		job.StatusShortlisted,
 		job.StatusApproved,
+		job.StatusApplied,
+		job.StatusInterview,
+		job.StatusOffer,
 		job.StatusRejected,
 	} {
 		if count := report.Jobs.ByStatus[string(status)]; count > 0 {
