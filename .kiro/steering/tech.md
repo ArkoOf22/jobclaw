@@ -233,3 +233,38 @@ without auth.
 
 Sync is idempotent: `jobs.sheet_synced_at` is set only after a successful append,
 so a second run adds nothing and a failed run leaves rows eligible for retry.
+
+### Model selection
+
+Two models, set in `config/resume.yaml` under `resume.llm`:
+
+- `model` — resume tailoring. Prose a recruiter reads, so quality matters.
+  Currently `google/gemini-2.5-flash`.
+- `answers_model` — questionnaire answers. Short factual strings like "Yes" or
+  "India". Currently `mistralai/mistral-small-24b-instruct-2501`. Falls back to
+  `model` when unset.
+
+Both are available on Zero Data Retention endpoints, so `deny_data_collection`
+and `require_zero_data_retention` still hold.
+
+Cost per resume, roughly 8k prompt and 1k completion tokens:
+
+| Model | Per resume | At 300/month |
+| :--- | :--- | :--- |
+| `anthropic/claude-sonnet-4.5` (previous) | $0.0390 | $11.70 |
+| `google/gemini-2.5-flash` (current) | $0.0049 | $1.47 |
+| `mistralai/mistral-small-24b-instruct-2501` | $0.0005 | $0.14 |
+
+A/B on job 473 found Gemini Flash equal or better: identical fact preservation
+across every checked term, and 2563 bytes against Sonnet's 3384 for the same
+content. Sonnet padded with a generic summary paragraph; Gemini kept the
+quantified bullets and dropped the filler. Being closer to the 2648-byte master
+is the desirable direction.
+
+Do not chase the OpenRouter discount list. Discounts rotate, so a pinned
+discounted model breaks silently when one ends, and cheap models are frequently
+cheap because they train on inputs, which the ZDR constraint excludes anyway.
+
+The larger cost lever is prompt size, not model choice: the full job description
+is sent, and input is roughly 60% of each resume's cost. Trimming it would save
+more than any model swap, with no quality risk.
