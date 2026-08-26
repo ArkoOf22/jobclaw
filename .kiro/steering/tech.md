@@ -296,3 +296,28 @@ on a paragraph boundary so a requirement is never severed.
 
 The remaining cost lever is **output** tokens, not input. Shorter resumes would be
 cheaper, but resume length is a quality decision, not a cost one.
+
+### Closing the loop: mark
+
+```bash
+jobclaw mark <job_id> applied   # applied by hand
+jobclaw mark <job_id> skipped   # decided against it
+```
+
+Submission happens on the employer's own form, so nothing can detect it. The
+candidate reports it and this records it, updating the database and the sheet's
+Status cell together. Without it the sheet fills with rows still marked NEW.
+
+`applied` bridges through APPROVED when needed, since applying to a job is the
+approval. `skipped` rejects it so it never resurfaces.
+
+`resume <job_id>` also writes the artifact path into the sheet's Resume cell and
+sets the row to RESUME READY.
+
+Sheet writes here are best-effort: the database is the source of truth, so a
+Google API failure reports itself and leaves the state change standing rather than
+rolling it back. Cells are written individually because Resume (I) and Status (J)
+are not adjacent to the columns between them, and a range write would clobber Why.
+
+Rows are located by scanning column A for the job ID, since the sheet is written
+in score order and rows are never renumbered.
