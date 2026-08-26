@@ -110,21 +110,52 @@ func (s *Scorer) Score(
 		s.preferences.Compensation,
 	)
 
-	// Component scores add up to a maximum of 110.
-	// Normalize the final score to a 0-100 scale so that
-	// JobQuality thresholds remain intuitive.
-	rawScore := skills +
-		candidateSkills +
-		role +
-		experience +
-		domain +
-		candidateDomain +
-		location +
-		companyScore +
-		compensation
+	// Normalize over the signals actually present rather than a fixed 100.
+	//
+	// Absence of evidence was previously scored as mediocre evidence: a job with
+	// no salary data still consumed the full 10-point compensation slot while
+	// only ever earning 5. Greenhouse never publishes salary, so every job
+	// sourced from it was capped roughly 5 points below what the thresholds
+	// assume, and the same applied to an unclassified company and to
+	// descriptions from which no required skills or domains could be parsed.
+	//
+	// Excluding an unavailable signal from both numerator and denominator keeps
+	// the score comparable across sources, so thresholds stay meaningful.
+	signals := []scoreSignal{
+		{value: skills, max: maxSkillsScore, available: true},
+		{
+			value:     candidateSkills,
+			max:       maxCandidateSkillsScore,
+			available: candidateMatch.RequiredSkills > 0,
+		},
+		{value: role, max: maxRoleScore, available: true},
+		{value: experience, max: maxExperienceScore, available: true},
+		{value: domain, max: maxDomainScore, available: true},
+		{
+			value:     candidateDomain,
+			max:       maxCandidateDomainScore,
+			available: candidateMatch.RequiredDomains > 0,
+		},
+		{value: location, max: maxLocationScore, available: true},
+		{
+			value:     companyScore,
+			max:       maxCompanyScore,
+			available: c.Classification != company.ClassificationUnknown,
+		},
+		{
+			value:     compensation,
+			max:       maxCompensationScore,
+			available: j.SalaryMin != nil || j.SalaryMax != nil,
+		},
+	}
 
-	const maxRawScore = 100.0
-	overall := (rawScore / maxRawScore) * 100.0
+	rawScore, maxRawScore := accumulateSignals(signals)
+
+	overall := 0.0
+
+	if maxRawScore > 0 {
+		overall = (rawScore / maxRawScore) * 100.0
+	}
 
 	recommendation := RecommendationSkip
 
@@ -176,4 +207,44 @@ func (s *Scorer) Score(
 			candidateMatch.RequiredDomains,
 		),
 	}
+}
+
+// Component maximums. These must stay in sync with the corresponding score
+// functions in rules.go, and are the denominator contributions used when a
+// signal is present.
+const (
+	maxSkillsScore          = 20.0
+	maxCandidateSkillsScore = 10.0
+	maxRoleScore            = 15.0
+	maxExperienceScore      = 15.0
+	maxDomainScore          = 10.0
+	maxCandidateDomainScore = 5.0
+	maxLocationScore        = 10.0
+	maxCompanyScore         = 5.0
+	maxCompensationScore    = 10.0
+)
+
+// scoreSignal is one scoring component together with whether the underlying
+// evidence was actually available.
+type scoreSignal struct {
+	value     float64
+	max       float64
+	available bool
+}
+
+// accumulateSignals totals the available signals and the maximum they could have
+// reached, so the caller can normalize over real evidence only.
+func accumulateSignals(signals []scoreSignal) (float64, float64) {
+	var total, maximum float64
+
+	for _, signal := range signals {
+		if !signal.available {
+			continue
+		}
+
+		total += signal.value
+		maximum += signal.max
+	}
+
+	return total, maximum
 }
