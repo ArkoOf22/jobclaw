@@ -76,6 +76,24 @@ func main() {
 
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "status":
+			// Machine-readable pipeline state, so an orchestrator can drive
+			// JobClaw without parsing the human-facing output.
+			asJSON := false
+
+			if len(os.Args) == 3 {
+				if os.Args[2] != "--json" {
+					log.Fatal("usage: jobclaw status [--json]")
+				}
+
+				asJSON = true
+			} else if len(os.Args) > 3 {
+				log.Fatal("usage: jobclaw status [--json]")
+			}
+
+			runStatus(databasePath, asJSON, db)
+			return
+
 		case "discover":
 			runDiscover(databasePath, cfg, db)
 			return

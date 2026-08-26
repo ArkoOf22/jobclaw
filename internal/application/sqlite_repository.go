@@ -282,3 +282,91 @@ func parseTime(value string) (time.Time, error) {
 
 	return time.Time{}, fmt.Errorf("unsupported time format %q", value)
 }
+
+// List returns applications newest first.
+//
+// Deliberately not part of the Repository interface: only the status report needs
+// it, and widening the interface would force every implementation and test fake
+// to grow a method they do not use.
+func (r *SQLiteRepository) List(
+	ctx context.Context,
+	limit int,
+) ([]Application, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT
+			id,
+			job_id,
+			status,
+			COALESCE(tailored_resume_path, ''),
+			COALESCE(cover_letter_path, ''),
+			COALESCE(referral_message_path, ''),
+			COALESCE(application_answers_path, ''),
+			created_at,
+			updated_at
+		FROM applications
+		ORDER BY id DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list applications: %w", err)
+	}
+	defer rows.Close()
+
+	applications := make([]Application, 0)
+
+	for rows.Next() {
+		var (
+			app       Application
+			status    string
+			createdAt string
+			updatedAt string
+		)
+
+		if err := rows.Scan(
+			&app.ID,
+			&app.JobID,
+			&status,
+			&app.TailoredResumePath,
+			&app.CoverLetterPath,
+			&app.ReferralMessagePath,
+			&app.ApplicationAnswersPath,
+			&createdAt,
+			&updatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan application: %w", err)
+		}
+
+		app.Status = Status(status)
+
+		created, err := parseTime(createdAt)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"parse application created_at: %w",
+				err,
+			)
+		}
+
+		updated, err := parseTime(updatedAt)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"parse application updated_at: %w",
+				err,
+			)
+		}
+
+		app.CreatedAt = created
+		app.UpdatedAt = updated
+
+		applications = append(applications, app)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate applications: %w", err)
+	}
+
+	return applications, nil
+}
