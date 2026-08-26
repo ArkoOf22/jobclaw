@@ -11,10 +11,12 @@ func TestApplicationPreparationMarksReadyApplication(
 	applications := &fakeApplicationRepository{
 		applications: map[int64]*Application{
 			100: {
-				ID:                 100,
-				JobID:              10,
-				Status:             StatusDraft,
-				TailoredResumePath: "resume.txt",
+				ID:     100,
+				JobID:  10,
+				Status: StatusDraft,
+				// Readiness verifies the artifact exists on disk, so this must
+				// be a real file rather than a placeholder path.
+				TailoredResumePath: writeReadinessArtifact(t, "resume.txt"),
 			},
 		},
 	}
