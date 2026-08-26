@@ -1,0 +1,40 @@
+[Unit]
+# One scheduled discovery pass. Triggered by jobclaw-discover.timer.
+Description=JobClaw scheduled discovery and scoring
+Documentation=https://github.com/ArkoOf22/jobclaw
+After=network-online.target jobspy-mcp.service
+Wants=network-online.target
+
+# Discovery works without JobSpy, since source failures are isolated, so this is
+# Wants rather than Requires.
+Wants=jobspy-mcp.service
+
+[Service]
+Type=oneshot
+User=openclaw
+Group=openclaw
+WorkingDirectory=/home/openclaw/jobclaw
+
+ExecStart=/home/openclaw/jobclaw/scripts/scheduled-discovery.sh
+
+# Discovery is network-bound across several job boards, and a build may be needed
+# on the first run after a deploy.
+TimeoutStartSec=20min
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+# The database, generated artifacts, and the build output all live under the
+# project directory.
+ReadWritePaths=/home/openclaw/jobclaw
+
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
