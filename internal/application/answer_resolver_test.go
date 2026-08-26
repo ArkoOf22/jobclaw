@@ -291,3 +291,181 @@ func TestClassifyQuestionFieldPreferredProgrammingLanguage(t *testing.T) {
 		}
 	}
 }
+
+// ATS platforms name custom questions opaquely. Greenhouse uses IDs like
+// "question_48620091" for "Are you authorized to work...", so matching only on
+// the literal field key would tie a verified answer to one employer's one form.
+func TestAnswerResolverFallsBackToSemanticFieldKey(t *testing.T) {
+	testCases := []struct {
+		name         string
+		question     string
+		opaqueKey    string
+		bankKey      string
+		wantFieldKey string
+	}{
+		{
+			name:         "work authorization",
+			question:     "Are you authorized to work in the location(s) you selected?",
+			opaqueKey:    "question_48620091",
+			bankKey:      "work_authorization",
+			wantFieldKey: "work_authorization",
+		},
+		{
+			name:         "visa sponsorship",
+			question:     "Will you require Stripe to sponsor you for a work permit?",
+			opaqueKey:    "question_48620092",
+			bankKey:      "visa_sponsorship",
+			wantFieldKey: "visa_sponsorship",
+		},
+		{
+			name:         "remote intent is not relocation",
+			question:     "If this role offers the option to work from a remote location, do you plan to work remotely?",
+			opaqueKey:    "question_48620093",
+			bankKey:      "remote_preference",
+			wantFieldKey: "remote_preference",
+		},
+		{
+			name:         "prior employment at this company",
+			question:     "Have you ever been employed by Stripe or a Stripe affiliate?",
+			opaqueKey:    "question_48620094",
+			bankKey:      "previously_employed_here",
+			wantFieldKey: "previously_employed_here",
+		},
+		{
+			name:         "country of residence",
+			question:     "Please select the country where you currently reside.",
+			opaqueKey:    "question_48620089",
+			bankKey:      "country_of_residence",
+			wantFieldKey: "country_of_residence",
+		},
+		{
+			name:         "messaging opt-in",
+			question:     "Do you opt-in to receive WhatsApp messages from Stripe Recruiting?",
+			opaqueKey:    "question_49691714",
+			bankKey:      "messaging_opt_in",
+			wantFieldKey: "messaging_opt_in",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			resolver := NewAnswerResolver(&fakeAnswerRepository{
+				answers: map[string]*CandidateAnswer{
+					testCase.bankKey: {
+						FieldKey: testCase.bankKey,
+						Answer:   "Yes",
+						Verified: true,
+					},
+				},
+			})
+
+			resolution, err := resolver.Resolve(
+				context.Background(),
+				ApplicationQuestion{
+					ID:       1,
+					Question: testCase.question,
+					FieldKey: testCase.opaqueKey,
+				},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if resolution.Status != ResolutionAnswered {
+				t.Fatalf(
+					"status = %q, want %q; reason = %s",
+					resolution.Status,
+					ResolutionAnswered,
+					resolution.Reason,
+				)
+			}
+
+			if resolution.FieldKey != testCase.wantFieldKey {
+				t.Fatalf(
+					"field key = %q, want %q",
+					resolution.FieldKey,
+					testCase.wantFieldKey,
+				)
+			}
+
+			if resolution.Source != AnswerSourceCandidate {
+				t.Fatalf(
+					"source = %q, want %q",
+					resolution.Source,
+					AnswerSourceCandidate,
+				)
+			}
+		})
+	}
+}
+
+// The literal field key must win when it has an answer, so a deliberately
+// employer-specific answer is not shadowed by a generic one.
+func TestAnswerResolverPrefersLiteralFieldKey(t *testing.T) {
+	resolver := NewAnswerResolver(&fakeAnswerRepository{
+		answers: map[string]*CandidateAnswer{
+			"question_48620091": {
+				FieldKey: "question_48620091",
+				Answer:   "Employer-specific answer",
+				Verified: true,
+			},
+			"work_authorization": {
+				FieldKey: "work_authorization",
+				Answer:   "Generic answer",
+				Verified: true,
+			},
+		},
+	})
+
+	resolution, err := resolver.Resolve(
+		context.Background(),
+		ApplicationQuestion{
+			ID:       1,
+			Question: "Are you authorized to work in India?",
+			FieldKey: "question_48620091",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if resolution.Answer != "Employer-specific answer" {
+		t.Fatalf(
+			"answer = %q, want the literal field key to take precedence",
+			resolution.Answer,
+		)
+	}
+}
+
+// An unverified answer must not be used, even via the semantic fallback.
+func TestAnswerResolverIgnoresUnverifiedSemanticMatch(t *testing.T) {
+	resolver := NewAnswerResolver(&fakeAnswerRepository{
+		answers: map[string]*CandidateAnswer{
+			"work_authorization": {
+				FieldKey: "work_authorization",
+				Answer:   "Yes",
+				Verified: false,
+			},
+		},
+	})
+
+	resolution, err := resolver.Resolve(
+		context.Background(),
+		ApplicationQuestion{
+			ID:       1,
+			Question: "Are you legally authorized to work?",
+			FieldKey: "question_1",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if resolution.Status != ResolutionNeedsReview {
+		t.Fatalf(
+			"status = %q, want %q for an unverified answer",
+			resolution.Status,
+			ResolutionNeedsReview,
+		)
+	}
+}
