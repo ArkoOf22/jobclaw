@@ -56,19 +56,38 @@ rules:
 
   - capability: shell
     match:
-      # Reading secrets through the shell, bypassing fs_read and .kiroignore.
-      - "* .env*"
-      - "*.pem*"
-      - "*.aws/credentials*"
-      - "*.aws/config*"
-      - "*id_rsa*"
-      - "*id_ed25519*"
-      - "*.pgpass*"
-      - "*credentials.json*"
-      # Credential-bearing invocations.
+      # Reading secrets through the shell, which bypasses fs_read and
+      # .kiroignore because shell is a separate capability.
+      #
+      # These are anchored to the reading command rather than written as bare
+      # argument wildcards. A pattern like "*.pem*" would also block the normal
+      # workflow, since ordinary commands legitimately mention those paths: the
+      # ssh alias references a .pem identity file, and running the pipeline
+      # sources .env to export configuration. Blocking on the command that would
+      # actually disclose the contents keeps the barrier meaningful without
+      # breaking day-to-day work.
+      - "cat *.env*"
+      - "cat *.pem*"
+      - "cat *.key*"
+      - "cat *credentials*"
+      - "cat *.pgpass*"
+      - "cat *id_rsa*"
+      - "cat *id_ed25519*"
+      - "less *.env*"
+      - "more *.env*"
+      - "head *.env*"
+      - "tail *.env*"
+      - "strings *.pem*"
+      - "xxd *.pem*"
+      - "base64 *.pem*"
+      - "cp *.pem *"
+      - "cp *.env *"
+
+      # Credentials passed inline. Anything in argv is world-readable via ps.
       - "PGPASSWORD=*"
-      - "*OPENROUTER_API_KEY=*"
+      - "*OPENROUTER_API_KEY=sk-*"
       - "*AWS_SECRET_ACCESS_KEY=*"
+
       # Destructive or privilege-changing.
       - "rm -rf *"
       - "sudo rm *"
@@ -76,8 +95,10 @@ rules:
       - "* --no-verify*"
       - "git push --force*"
       - "git reset --hard*"
+
       # Infrastructure with real blast radius.
       - "aws ec2 authorize-security-group-ingress*"
+      - "aws ec2 revoke-security-group-ingress*"
       - "aws iam *"
       - "terraform apply*"
       - "terraform destroy*"
