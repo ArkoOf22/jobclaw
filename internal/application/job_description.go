@@ -48,7 +48,11 @@ func NormalizeJobDescription(raw string) string {
 
 	// Mark block boundaries before tags are removed, otherwise list items and
 	// paragraphs merge into a single unreadable line.
-	text = blockBreakPattern.ReplaceAllString(text, "\n")
+	//
+	// A blank line, not a single newline: downstream trimming works on
+	// paragraphs, and a single newline would leave the whole description as one
+	// paragraph that no heading rule could ever match.
+	text = blockBreakPattern.ReplaceAllString(text, "\n\n")
 
 	text = htmlTagPattern.ReplaceAllString(text, " ")
 
@@ -103,8 +107,17 @@ func TrimJobDescription(text string, maxChars int) string {
 		maxChars = 6000
 	}
 
+	// Drop whole sections, not individual paragraphs.
+	//
+	// Stripping tags turns an HTML heading into its own short paragraph, so the
+	// prose beneath it becomes a separate paragraph that carries no boilerplate
+	// keyword of its own. Dropping only the heading would leave the entire
+	// "About Stripe" body behind, which is most of the waste. A boilerplate
+	// heading therefore suppresses everything until the next heading.
 	paragraphs := strings.Split(text, "\n\n")
 	kept := make([]string, 0, len(paragraphs))
+
+	skipping := false
 
 	for _, paragraph := range paragraphs {
 		trimmed := strings.TrimSpace(paragraph)
@@ -113,7 +126,21 @@ func TrimJobDescription(text string, maxChars int) string {
 			continue
 		}
 
-		if isBoilerplate(trimmed) {
+		heading := looksLikeHeading(trimmed)
+
+		switch {
+		case isBoilerplate(trimmed):
+			// Boilerplate heading, or a paragraph opening with one.
+			skipping = heading
+
+			continue
+
+		case heading:
+			// A non-boilerplate heading ends any suppressed section.
+			skipping = false
+
+		case skipping:
+			// Body text belonging to a suppressed section.
 			continue
 		}
 
@@ -158,6 +185,11 @@ func TrimJobDescription(text string, maxChars int) string {
 // isBoilerplate reports whether a paragraph opens with an employer-boilerplate
 // heading. Only the first line is examined, so a requirement that happens to
 // mention benefits is not discarded.
+//
+// Once tags are stripped, an HTML heading becomes a standalone short paragraph,
+// so the heading and the prose beneath it end up as separate paragraphs. A bare
+// heading is therefore dropped on its own, and the following paragraph is judged
+// on its own opening text.
 func isBoilerplate(paragraph string) bool {
 	firstLine := paragraph
 
@@ -182,4 +214,37 @@ func isBoilerplate(paragraph string) bool {
 	}
 
 	return false
+}
+
+// looksLikeHeading reports whether a paragraph is a section heading rather than
+// body text.
+//
+// After tag stripping there is no markup left to identify headings, so this uses
+// shape: headings are short, single-line, and not sentences. Bullet lines are
+// excluded because a list item is content, not a section boundary.
+func looksLikeHeading(paragraph string) bool {
+	if strings.Contains(paragraph, "\n") {
+		return false
+	}
+
+	trimmed := strings.TrimSpace(paragraph)
+
+	if trimmed == "" || len(trimmed) > 60 {
+		return false
+	}
+
+	// List markers indicate content.
+	for _, marker := range []string{"-", "*", "•", "◦", "·"} {
+		if strings.HasPrefix(trimmed, marker) {
+			return false
+		}
+	}
+
+	// A terminal full stop, question mark, comma or semicolon means prose.
+	switch trimmed[len(trimmed)-1] {
+	case '.', '?', ',', ';':
+		return false
+	}
+
+	return true
 }
