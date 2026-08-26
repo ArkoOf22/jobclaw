@@ -157,6 +157,15 @@ func (s *Scorer) Score(
 		overall = (rawScore / maxRawScore) * 100.0
 	}
 
+	// Name the excluded signals. Without this the breakdown still lists a value
+	// for a component that did not count, which reads as though it contributed.
+	excluded := excludedSignalNames(
+		candidateMatch,
+		c.Classification,
+		j.SalaryMin,
+		j.SalaryMax,
+	)
+
 	recommendation := RecommendationSkip
 
 	switch {
@@ -191,7 +200,7 @@ func (s *Scorer) Score(
 		CompensationScore:    compensation,
 		Recommendation:       recommendation,
 		Reasoning: fmt.Sprintf(
-			"skills=%.1f candidate_skills=%.1f role=%.1f experience=%.1f domain=%.1f candidate_domain=%.1f location=%.1f company=%.1f compensation=%.1f candidate_skills_match=%d/%d candidate_domain_match=%d/%d",
+			"skills=%.1f candidate_skills=%.1f role=%.1f experience=%.1f domain=%.1f candidate_domain=%.1f location=%.1f company=%.1f compensation=%.1f candidate_skills_match=%d/%d candidate_domain_match=%d/%d excluded=[%s] normalized_over=%.1f",
 			skills,
 			candidateSkills,
 			role,
@@ -205,6 +214,8 @@ func (s *Scorer) Score(
 			candidateMatch.RequiredSkills,
 			candidateMatch.MatchedDomains,
 			candidateMatch.RequiredDomains,
+			strings.Join(excluded, ","),
+			maxRawScore,
 		),
 	}
 }
@@ -247,4 +258,33 @@ func accumulateSignals(signals []scoreSignal) (float64, float64) {
 	}
 
 	return total, maximum
+}
+
+// excludedSignalNames lists the components left out of normalization because the
+// evidence they depend on was not present in the job posting.
+func excludedSignalNames(
+	match CandidateMatch,
+	classification company.Classification,
+	salaryMin *int,
+	salaryMax *int,
+) []string {
+	var excluded []string
+
+	if match.RequiredSkills == 0 {
+		excluded = append(excluded, "candidate_skills")
+	}
+
+	if match.RequiredDomains == 0 {
+		excluded = append(excluded, "candidate_domain")
+	}
+
+	if classification == company.ClassificationUnknown {
+		excluded = append(excluded, "company")
+	}
+
+	if salaryMin == nil && salaryMax == nil {
+		excluded = append(excluded, "compensation")
+	}
+
+	return excluded
 }
