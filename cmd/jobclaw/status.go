@@ -285,3 +285,124 @@ func printStatusReport(report StatusReport) {
 		}
 	}
 }
+
+// runPrune retires stale jobs. Preview is the default; deleting requires
+// --confirm, the same gate submission uses, because deletion is irreversible.
+func runPrune(
+	olderThanDays int,
+	confirmed bool,
+	db *database.DB,
+) {
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		2*time.Minute,
+	)
+	defer cancel()
+
+	jobRepo := job.NewSQLiteRepository(db)
+
+	cutoff := time.Now().UTC().AddDate(0, 0, -olderThanDays)
+
+	candidates, err := jobRepo.FindPrunable(
+		ctx,
+		job.PruneCriteria{Before: cutoff},
+	)
+	if err != nil {
+		log.Fatalf("find prunable jobs: %v", err)
+	}
+
+	fmt.Println("JobClaw Prune")
+	fmt.Println("────────────────────────────")
+	fmt.Printf(
+		"Cutoff:     jobs discovered before %s (%d days ago)\n",
+		cutoff.Format("2006-01-02"),
+		olderThanDays,
+	)
+	fmt.Printf("Eligible:   %d\n", len(candidates))
+	fmt.Println()
+	fmt.Println("Excluded from consideration: jobs with an application, and any")
+	fmt.Println("job at APPROVED, APPLIED, INTERVIEW, or OFFER.")
+	fmt.Println()
+
+	if len(candidates) == 0 {
+		fmt.Println("Nothing to prune.")
+
+		return
+	}
+
+	byStatus := map[job.Status]int{}
+
+	for _, candidate := range candidates {
+		byStatus[candidate.Status]++
+	}
+
+	fmt.Println("By status")
+
+	for status, count := range byStatus {
+		fmt.Printf("  %-14s %d\n", status, count)
+	}
+
+	fmt.Println()
+
+	const sampleSize = 10
+
+	fmt.Printf("Sample (first %d)\n", sampleSize)
+
+	for i, candidate := range candidates {
+		if i >= sampleSize {
+			break
+		}
+
+		fmt.Printf(
+			"  [%d] %s — %s (%s, %s)\n",
+			candidate.ID,
+			candidate.Company,
+			candidate.Title,
+			candidate.Status,
+			candidate.DiscoveredAt.Format("2006-01-02"),
+		)
+	}
+
+	fmt.Println()
+
+	if !confirmed {
+		fmt.Println("────────────────────────────")
+		fmt.Println("Mode: DRY RUN — nothing was deleted")
+		fmt.Println()
+		fmt.Printf(
+			"To delete these %d jobs and their scores:\n",
+			len(candidates),
+		)
+		fmt.Printf(
+			"  jobclaw prune --older-than %d --confirm\n",
+			olderThanDays,
+		)
+		fmt.Println()
+		fmt.Println("Back up data/jobclaw.db first. This cannot be undone.")
+
+		return
+	}
+
+	ids := make([]int64, 0, len(candidates))
+
+	for _, candidate := range candidates {
+		ids = append(ids, candidate.ID)
+	}
+
+	deleted, err := jobRepo.DeleteJobs(ctx, ids)
+	if err != nil {
+		log.Fatalf("prune jobs: %v", err)
+	}
+
+	fmt.Println("────────────────────────────")
+	fmt.Printf("Deleted %d job(s) and their scores.\n", deleted)
+
+	if deleted != int64(len(candidates)) {
+		// The guard inside the transaction skipped rows that changed after the
+		// preview was taken.
+		fmt.Printf(
+			"%d candidate(s) were skipped because they changed since the preview.\n",
+			int64(len(candidates))-deleted,
+		)
+	}
+}

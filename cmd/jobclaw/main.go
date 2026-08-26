@@ -94,6 +94,46 @@ func main() {
 			runStatus(databasePath, asJSON, db)
 			return
 
+		case "prune":
+			// Deletion is irreversible, so it takes the same gate as
+			// submission: preview unless --confirm is given.
+			olderThanDays := 30
+			confirmed := false
+
+			args := os.Args[2:]
+
+			for len(args) > 0 {
+				switch args[0] {
+				case "--confirm":
+					confirmed = true
+					args = args[1:]
+
+				case "--older-than":
+					if len(args) < 2 {
+						log.Fatal("--older-than requires a number of days")
+					}
+
+					days, err := strconv.Atoi(args[1])
+					if err != nil || days < 1 {
+						log.Fatal(
+							"--older-than must be a positive number of days",
+						)
+					}
+
+					olderThanDays = days
+					args = args[2:]
+
+				default:
+					log.Fatalf(
+						"unknown argument %q; usage: jobclaw prune [--older-than <days>] [--confirm]",
+						args[0],
+					)
+				}
+			}
+
+			runPrune(olderThanDays, confirmed, db)
+			return
+
 		case "discover":
 			runDiscover(databasePath, cfg, db)
 			return
