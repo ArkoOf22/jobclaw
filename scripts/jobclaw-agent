@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+#
+# Restricted JobClaw entrypoint for automated callers such as the OpenClaw agent.
+#
+# The point of this wrapper is that it does not rely on an agent following
+# instructions. Submitting an application is irreversible and externally visible,
+# so the ability to do it is removed here rather than merely discouraged in a
+# prompt. `submit` is always a dry run; `--confirm` is rejected outright.
+#
+# Everything else is allowlisted. An unrecognised subcommand is refused rather
+# than passed through, so new JobClaw commands are unavailable to the agent until
+# someone deliberately adds them.
+#
+# Usage:
+#   jobclaw-agent status --json
+#   jobclaw-agent shortlist
+#   jobclaw-agent approve 94
+#   jobclaw-agent submit 3          # preview only, always
+#
+set -euo pipefail
+
+readonly PROJECT_DIR="${JOBCLAW_DIR:-/home/openclaw/jobclaw}"
+readonly GO_BIN="${GO_BIN:-/usr/local/go/bin/go}"
+readonly BINARY="${PROJECT_DIR}/bin/jobclaw"
+
+die() {
+    printf 'jobclaw-agent: %s\n' "$*" >&2
+    exit 64
+}
+
+if [[ $# -lt 1 ]]; then
+    die "no subcommand given"
+fi
+
+# Reject the confirmation flag anywhere in the arguments, including attempts to
+# smuggle it past the subcommand check.
+for arg in "$@"; do
+    case "${arg}" in
+    --confirm | -confirm | --confirm=*)
+        die "refusing --confirm: real submission must be performed by a human"
+        ;;
+    esac
+done
+
+readonly SUBCOMMAND="$1"
+shift
+
+# Reject shell metacharacters in arguments. Nothing here is passed to a shell,
+# but an argument containing them indicates the caller is trying to do something
+# other than name a job or application.
+for arg in "$@"; do
+    if [[ "${arg}" =~ [\;\&\|\`\$\(\)\<\>] ]]; then
+        die "argument contains shell metacharacters: ${arg}"
+    fi
+done
+
+require_positive_int() {
+    if [[ ! "${1:-}" =~ ^[1-9][0-9]*$ ]]; then
+        die "expected a positive integer, got: ${1:-<missing>}"
+    fi
+}
+
+cd "${PROJECT_DIR}"
+
+if [[ -f .env ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    . ./.env
+    set +a
+fi
+
+if [[ ! -x "${BINARY}" ]]; then
+    mkdir -p "${PROJECT_DIR}/bin"
+    "${GO_BIN}" build -o "${BINARY}" ./cmd/jobclaw >&2
+fi
+
+case "${SUBCOMMAND}" in
+# --- Read-only ---
+status)
+    # Optional --json.
+    if [[ $# -gt 1 ]]; then
+        die "status takes at most one argument"
+    fi
+
+    if [[ $# -eq 1 && "$1" != "--json" ]]; then
+        die "status only accepts --json"
+    fi
+
+    exec "${BINARY}" status "$@"
+    ;;
+
+shortlist)
+    [[ $# -eq 0 ]] || die "shortlist takes no arguments"
+    exec "${BINARY}" shortlist
+    ;;
+
+jobs)
+    [[ "${1:-}" == "list" ]] || die "only 'jobs list' is permitted"
+    exec "${BINARY}" jobs list
+    ;;
+
+job)
+    require_positive_int "${1:-}"
+    exec "${BINARY}" job "$1"
+    ;;
+
+answers)
+    [[ $# -eq 0 ]] || die "answers takes no arguments"
+    exec "${BINARY}" answer list
+    ;;
+
+# --- State-changing, but reversible and local ---
+approve | reject)
+    require_positive_int "${1:-}"
+    exec "${BINARY}" "${SUBCOMMAND}" "$1"
+    ;;
+
+application | resume)
+    require_positive_int "${1:-}"
+    exec "${BINARY}" "${SUBCOMMAND}" "$1"
+    ;;
+
+questionnaire)
+    require_positive_int "${1:-}"
+    application_id="$1"
+    shift
+
+    if [[ $# -eq 0 ]]; then
+        exec "${BINARY}" questionnaire "${application_id}"
+    fi
+
+    [[ "$1" == "--from-greenhouse" ]] ||
+        die "questionnaire only accepts --from-greenhouse"
+
+    exec "${BINARY}" questionnaire "${application_id}" --from-greenhouse
+    ;;
+
+prepare)
+    require_positive_int "${1:-}"
+    exec "${BINARY}" prepare "$1"
+    ;;
+
+# --- Preview only, never sends ---
+submit)
+    require_positive_int "${1:-}"
+
+    # No pass-through of extra arguments. Even if the caller found a way to smuggle
+    # a confirmation flag past the loop above, it cannot reach the binary.
+    exec "${BINARY}" submit "$1"
+    ;;
+
+*)
+    die "subcommand not permitted: ${SUBCOMMAND}"
+    ;;
+esac
