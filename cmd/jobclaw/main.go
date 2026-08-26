@@ -506,34 +506,15 @@ func runPrepare(
 
 	answerResolver := application.NewAnswerResolver(answerRepo)
 
-	// Preparation re-resolves answers, and a resolver configured without the
-	// LLM downgrades every question the verified answer bank cannot cover,
-	// overwriting answers a previous questionnaire run had produced. Give
-	// preparation the same capability so re-resolution is equivalent rather
-	// than destructive.
-	var (
-		questionAnswerLLM application.QuestionAnswerLLM
-		candidateContext  string
-	)
-
-	if cfg != nil {
-		resumeConfig := cfg.Resume.Resume
-
-		if apiKey := os.Getenv(
-			resumeConfig.LLM.APIKeyEnv,
-		); apiKey != "" {
-			questionAnswerLLM, candidateContext = buildQuestionAnswerLLM(
-				cfg,
-				apiKey,
-			)
-		}
-	}
-
+	// Preparation validates; it does not generate. Questions that already carry
+	// an answer are left untouched by the questionnaire service, so this needs
+	// no LLM and makes no network calls. Unresolved questions are answered by
+	// `jobclaw questionnaire`.
 	questionnaireService := application.NewQuestionnaireService(
 		questionRepo,
 		answerResolver,
-		questionAnswerLLM,
-		candidateContext,
+		nil,
+		"",
 		eventRepo,
 	)
 
