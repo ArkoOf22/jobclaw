@@ -224,8 +224,44 @@ submit: JobClaw prepares and validates everything, then hands over the apply URL
 the resume file, and every resolved answer ready to paste. `MANUAL` is the correct
 adapter, not a placeholder for missing work.
 
-This finding is Greenhouse-specific. Other ATS platforms may differ and are worth
-checking individually before assuming the same.
+### Settled: no major ATS permits programmatic submission
+
+Checked Lever, Ashby, and Workday read-only on 2026-08-26 to see whether any of
+them allow what Greenhouse does not. None do. This is an industry norm, not a
+Greenhouse quirk, so do not re-investigate per platform.
+
+| Platform | Read API | Submission barrier |
+| :--- | :--- | :--- |
+| Greenhouse | Public, no auth | reCAPTCHA Enterprise (invisible, score-based), plus a separate fingerprint field and a per-request token |
+| Lever | Public, no auth | hCaptcha, actively rendered; the submit button is gated on a populated `hcaptchaResponseInput` |
+| Ashby | Public, no auth | reCAPTCHA with configured site keys, plus explicit `RejectBase64EncodedResumes` front-end flags |
+| Workday | SPA, no clean public API | Requires creating an account per employer before applying |
+
+Lever is a real `multipart/form-data` POST form rather than a pure JS call, which
+makes it look more tractable than Greenhouse. It is not: hCaptcha is required, and
+the page comments explicitly note that calling `submit()` directly would bypass
+validation, so the token cannot be sidestepped.
+
+Ashby's `RejectBase64EncodedResumesFrontEnd` flag is worth noting: it is an
+explicit measure against programmatically attached resumes, i.e. exactly this use
+case.
+
+**What this means.** Automated application submission is not achievable on any
+platform JobClaw would target. The product's terminal step is a one-tap human
+submit, permanently. `MANUAL` is the correct adapter everywhere.
+
+**What is still worth building.** Every platform above has a clean, public,
+unauthenticated read API. Phase 6 has real value for *discovery and form reading*:
+
+- Lever: `https://api.lever.co/v0/postings/{company}?mode=json` — verified, 384
+  postings from `leverdemo` with no credentials, and each posting carries an
+  `applyUrl`.
+- Ashby: `https://api.ashbyhq.com/posting-api/job-board/{company}` — verified
+  against `linear` and `notion`.
+
+Both are straightforward additions to `internal/discovery` following the existing
+`Source` interface, and both would extend questionnaire ingestion the same way the
+Greenhouse form provider does.
 
 ### Greenhouse: the API path also requires an employer key
 
