@@ -47,10 +47,39 @@ JOBCLAW_JOBSPY_LIVE_TEST=1 JOBCLAW_JOBSPY_URL=... go test ./internal/discovery/j
 `cmd/jobclaw/main.go` is the composition root and dispatches these subcommands:
 
 ```
-discover   jobs      score     shortlist   approve   reject
-application          answer {add, list, update}
-questionnaire        prepare   submit      resume     job
+discover   jobs list   score     shortlist   approve   reject
+application <jobID>    answer {add, list, update}
+questionnaire          prepare   submit      resume     job <id>
 ```
+
+### Submission is preview-by-default
+
+`jobclaw submit <id>` performs a **dry run**: it prints the target employer, the
+application state, the resolved questionnaire answers, and the configured
+targets, then exits without contacting anyone. Sending requires an explicit flag:
+
+```bash
+jobclaw submit 1            # preview only, nothing leaves the machine
+jobclaw submit 1 --confirm  # actually submits
+```
+
+Exit codes distinguish the outcomes that matter: `0` submitted or previewed,
+`1` not submitted with local state unchanged, `2` **ambiguous**. Ambiguous means
+the request may have reached the employer. Never resubmit on a `2`; the
+application stays locked in `SUBMISSION_IN_PROGRESS` pending manual
+reconciliation. Check `errors.Is(err, application.ErrSubmissionAmbiguous)` when
+handling this in code.
+
+### Commands that mutate live state
+
+`approve`, `reject`, `application`, `prepare`, `resume`, `submit --confirm`. Back
+up `data/jobclaw.db` or point `JOBCLAW_DB_PATH` at a scratch file when testing.
+
+### Commands that need `OPENROUTER_API_KEY`
+
+`resume` and `questionnaire`. `application` no longer requires it: the
+application and workspace are created regardless, and the resume is reported as
+PENDING and retried later with `jobclaw resume <jobID>`.
 
 ## Environment variables
 

@@ -95,6 +95,74 @@ results. Exactly the designed behavior.
 **Discovery is capped at 10 per source** (`Limit: 10`, hardcoded in `runDiscover`) with
 `HoursOld: 168` and `RemoteOnly: false`. Not configurable from YAML yet.
 
+## Vertical-slice trace (EC2, scratch DB, 2026-08-26)
+
+Traced `discover -> score -> approve -> application -> prepare -> submit` against a
+throwaway DB. The live database was backed up first and never touched.
+
+Four defects found and fixed:
+
+1. **Company classification was never invoked.** `ScoreJob` reads
+   `Company.Classification`, and with `require_product_company: true` a non-PRODUCT
+   value forces SKIP regardless of score. Nothing in the CLI ever called
+   `company.Service.Classify`, so every company stayed UNKNOWN and **every job was
+   skipped, permanently**. All the pieces existed and were tested; nothing wired
+   them together. Scoring now classifies on demand via `WithCompanyClassifier`.
+   Stripe correctly resolves to PRODUCT (`company` component 2.5 -> 5.0).
+2. **APPLY left jobs in a weaker status than SHORTLIST.** Only SHORTLIST advanced
+   the job; APPLY fell through to SCORED. Extracted to `targetStatusFor`.
+3. **Resume generation was fused into application creation.** `CreateForApprovedJob`
+   committed the application row and then generated the resume. On LLM failure the
+   caller got an error while the row persisted, and the retry matched the "already
+   exists" branch and returned success without generating anything, leaving the
+   application permanently resume-less while reporting success. Split into
+   `CreateForApprovedJob` + idempotent `EnsureTailoredResume`, which also
+   regenerates when the recorded artifact is missing or empty.
+4. **Ambiguous submissions were reported as "No application was submitted."**
+   The domain layer handles ambiguity correctly, but the CLI collapsed every error
+   into that message, inviting a duplicate application. Added
+   `ErrSubmissionAmbiguous` for `errors.Is`, and the lock check now runs *before*
+   the readiness check, since a locked application otherwise fails as
+   "not READY_TO_APPLY" and hides the only fact that matters.
+
+Also confirmed working: readiness correctly blocks on a missing resume, source
+isolation survives a dead JobSpy, and the `submit` safety chain refuses an unready
+application even with `--confirm`.
+
+### Open: scoring is calibrated out of reach
+
+Thresholds are `shortlist: 70`, `apply: 80`, over a 100-point scale. Genuine
+Backend Engineer roles at Stripe score **68.5, 68.0, and 51.0** after the
+classification fix, so nothing reaches even SHORTLIST.
+
+Two components are structurally unreachable for Greenhouse-sourced jobs:
+
+- `compensation` returns a flat 5/10 when no salary is present, and Greenhouse
+  never supplies salary. Absence of evidence is scored as mediocre evidence.
+- `skills` (max 20) and `domain` (max 10) need many distinct keyword hits;
+  real descriptions land around 7 and 3.
+
+This is a calibration decision, not a defect, so it is left alone. Options:
+lower the thresholds, or renormalize over the signals actually present rather
+than a fixed 100. Note also that the comment above `maxRawScore` claims the
+components total 110 when they total 100, which suggests the scale changed at
+some point without the thresholds being revisited.
+
+Not a blocker for the slice: approval is a manual human gate and
+`SCORED -> APPROVED` is a legal transition, so a SKIP recommendation is advice
+rather than a wall.
+
+### Still blocked
+
+`OPENROUTER_API_KEY` is absent, so resume tailoring and LLM answer fallback
+cannot run. Everything up to and including readiness validation now works
+without it. Set it with `scripts/set-openrouter-key.sh`.
+
+Questionnaire ingestion was not exercised: it needs `JOBCLAW_GREENHOUSE_BASE_URL`
+plus an API key. Readiness currently passes questionnaire checks with "no
+questionnaire questions", which is a soft failure mode worth tightening once
+ingestion runs, since nothing distinguishes "no questions" from "not yet ingested".
+
 ## Roadmap position
 
 Phases 1–3 (foundation, discovery, application preparation) are largely complete. Phase 4, the
