@@ -228,7 +228,7 @@ func main() {
 				log.Fatal("application ID must be a positive integer")
 			}
 
-			runPrepare(applicationID, db)
+			runPrepare(applicationID, cfg, db)
 			return
 
 		case "submit":
@@ -490,6 +490,7 @@ func runResume(
 
 func runPrepare(
 	applicationID int64,
+	cfg *config.Config,
 	db *database.DB,
 ) {
 	ctx, cancel := context.WithTimeout(
@@ -505,11 +506,34 @@ func runPrepare(
 
 	answerResolver := application.NewAnswerResolver(answerRepo)
 
+	// Preparation re-resolves answers, and a resolver configured without the
+	// LLM downgrades every question the verified answer bank cannot cover,
+	// overwriting answers a previous questionnaire run had produced. Give
+	// preparation the same capability so re-resolution is equivalent rather
+	// than destructive.
+	var (
+		questionAnswerLLM application.QuestionAnswerLLM
+		candidateContext  string
+	)
+
+	if cfg != nil {
+		resumeConfig := cfg.Resume.Resume
+
+		if apiKey := os.Getenv(
+			resumeConfig.LLM.APIKeyEnv,
+		); apiKey != "" {
+			questionAnswerLLM, candidateContext = buildQuestionAnswerLLM(
+				cfg,
+				apiKey,
+			)
+		}
+	}
+
 	questionnaireService := application.NewQuestionnaireService(
 		questionRepo,
 		answerResolver,
-		nil,
-		"",
+		questionAnswerLLM,
+		candidateContext,
 		eventRepo,
 	)
 
@@ -1756,4 +1780,54 @@ func ingestGreenhouseQuestionnaire(
 	}
 
 	return results
+}
+
+// buildQuestionAnswerLLM assembles the questionnaire answer generator and the
+// candidate context it draws on. Shared by the questionnaire and prepare
+// commands so both resolve with identical capability.
+func buildQuestionAnswerLLM(
+	cfg *config.Config,
+	apiKey string,
+) (application.QuestionAnswerLLM, string) {
+	resumeConfig := cfg.Resume.Resume
+
+	resumeSource := application.NewResumeSource(
+		application.ResumeSourceConfig{
+			MasterPath:            resumeConfig.MasterPath,
+			OutputFormat:          resumeConfig.OutputFormat,
+			PreserveFacts:         resumeConfig.Generation.PreserveFacts,
+			AllowRewording:        resumeConfig.Generation.AllowRewording,
+			AllowReordering:       resumeConfig.Generation.AllowReordering,
+			AllowSkillSelection:   resumeConfig.Generation.AllowSkillSelection,
+			AllowMetricChanges:    resumeConfig.Generation.AllowMetricChanges,
+			AllowExperienceInvent: resumeConfig.Generation.AllowExperienceInvention,
+		},
+	)
+
+	contextBuilder := application.NewCandidateContextBuilder(
+		cfg.Candidate.Candidate,
+		resumeSource,
+	)
+
+	candidateContext, err := contextBuilder.Build()
+	if err != nil {
+		log.Fatalf("build candidate context: %v", err)
+	}
+
+	llmClient, err := openrouter.NewClient(
+		openrouter.Config{
+			APIKey:  apiKey,
+			Model:   resumeConfig.LLM.Model,
+			BaseURL: resumeConfig.LLM.BaseURL,
+			DenyDataCollection: resumeConfig.LLM.Privacy.
+				DenyDataCollection,
+			RequireZeroDataRetention: resumeConfig.LLM.Privacy.
+				RequireZeroDataRetention,
+		},
+	)
+	if err != nil {
+		log.Fatalf("initialize questionnaire LLM: %v", err)
+	}
+
+	return application.NewLLMQuestionAnswerGenerator(llmClient), candidateContext
 }
