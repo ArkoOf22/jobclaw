@@ -11,20 +11,18 @@
 
 Direct dependencies are few and deliberate. Prefer the standard library before adding anything new.
 
-## Toolchain requirement (read this first)
+## Where the code runs
 
-`go.mod` requires Go >= 1.26.5. The currently installed toolchain is **1.25.5** with
-`GOTOOLCHAIN=local`, so `go build`, `go vet`, and `go test` all fail immediately with:
+**Build and run on EC2, not locally.** See `environment.md` for access details. The EC2 host has
+Go 1.26.5, which is what `go.mod` requires.
 
-```
-go: go.mod requires go >= 1.26.5 (running go 1.25.5; GOTOOLCHAIN=local)
-```
-
-This is an environment gap, not a code problem. Resolve it before trusting any build or test result:
-install Go 1.26.5+, or unset `GOTOOLCHAIN=local` so Go can fetch the required toolchain automatically.
-Do not report tests as passing without an actual clean run.
+The local macOS checkout has Go 1.25.5 with `GOTOOLCHAIN=local`, so builds fail there with
+`go.mod requires go >= 1.26.5`. That is expected — the Mac is for editing, EC2 is for building.
+Do not "fix" it by downgrading `go.mod`.
 
 ## Commands
+
+Run these on the EC2 host, from `/home/openclaw/jobclaw` as the `openclaw` user:
 
 ```bash
 go build ./...
@@ -34,7 +32,9 @@ go test ./internal/application   # single package
 go test -run TestName ./internal/job
 ```
 
-`go test ./...` and `go vet ./...` were clean as of commit `a5b0edd`.
+Verified clean on EC2 at commit `a5b0edd`: build, vet, and the full test suite all pass.
+`internal/{application,company,config,database,discovery,discovery/greenhouse,discovery/jobspy,job,llm/openrouter,scoring}`
+all pass; `cmd/jobclaw` and the three `cmd*` helper packages have no test files.
 
 Live-network tests are opt-in and skip by default:
 

@@ -66,6 +66,35 @@ The imported context document contains three claims that do not match the tree. 
    (`add`/`list`/`update`), `questionnaire`, `prepare`, `submit`, `resume`, and `job`. What it lacks
    is test coverage, not commands.
 
+## Live observations (verified on EC2, 2026-08-26)
+
+Build, vet, and the full test suite pass on the EC2 host at `a5b0edd`.
+
+**The production DB is polluted with pre-matcher results.** `internal/discovery/matcher.go` was added
+in `a5b0edd` (today). The 20 jobs in `data/jobclaw.db` were discovered around Aug 21 by the older
+Greenhouse client from `66b181d`, which had no keyword filtering. They are all off-target for a
+backend candidate: "University Recruiter", "Workplace Operations Manager", "U.S. Federal Government
+Relations Director", "Technical Program Manager", and similar.
+
+Consequence: **job 7 is "Workplace Operations Manager - Dublin"**, and it was approved with a tailored
+resume generated against it at `data/applications/7/resume/tailored_resume.txt`. The pipeline worked
+mechanically on meaningless input. Job 7 is not a valid subject for the vertical slice.
+
+**The new matcher is correct.** A scratch-DB discovery run (`JOBCLAW_DB_PATH=/tmp/...`,
+`JOBCLAW_GREENHOUSE_BOARDS=stripe`) returned 3 jobs instead of 20, all genuine:
+Backend Engineer (Core Technology), Backend Engineer (Financial Connections), Backend Engineer
+(Payments). Keyword filtering against `target_roles.primary` works as intended.
+
+**Source isolation is confirmed working in the wild.** In the same run, the JobSpy source failed with
+`dial tcp 127.0.0.1:8000: connect: connection refused` while Greenhouse succeeded and stored its
+results. Exactly the designed behavior.
+
+**JobSpy is dead until its server runs.** The MCP server exists at `/home/openclaw/jobspy-mcp` with a
+`.venv` but is not running. Discovery is Greenhouse-only in practice.
+
+**Discovery is capped at 10 per source** (`Limit: 10`, hardcoded in `runDiscover`) with
+`HoursOld: 168` and `RemoteOnly: false`. Not configurable from YAML yet.
+
 ## Roadmap position
 
 Phases 1–3 (foundation, discovery, application preparation) are largely complete. Phase 4, the
