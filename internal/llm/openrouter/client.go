@@ -18,6 +18,15 @@ type Config struct {
 	Model      string
 	BaseURL    string
 	HTTPClient *http.Client
+
+	// DenyDataCollection restricts routing to providers that do not store
+	// prompt data. Prompts here carry candidate PII, so callers should
+	// normally enable this.
+	DenyDataCollection bool
+
+	// RequireZeroDataRetention restricts routing to Zero Data Retention
+	// endpoints.
+	RequireZeroDataRetention bool
 }
 
 type Client struct {
@@ -25,6 +34,9 @@ type Client struct {
 	model      string
 	baseURL    string
 	httpClient *http.Client
+
+	denyDataCollection       bool
+	requireZeroDataRetention bool
 }
 
 func NewClient(cfg Config) (*Client, error) {
@@ -53,16 +65,52 @@ func NewClient(cfg Config) (*Client, error) {
 	}
 
 	return &Client{
-		apiKey:     cfg.APIKey,
-		model:      cfg.Model,
-		baseURL:    baseURL,
-		httpClient: httpClient,
+		apiKey:                   cfg.APIKey,
+		model:                    cfg.Model,
+		baseURL:                  baseURL,
+		httpClient:               httpClient,
+		denyDataCollection:       cfg.DenyDataCollection,
+		requireZeroDataRetention: cfg.RequireZeroDataRetention,
 	}, nil
 }
 
 type chatRequest struct {
 	Model    string    `json:"model"`
 	Messages []message `json:"messages"`
+
+	// Provider carries OpenRouter routing preferences. Omitted entirely when
+	// no restrictions are configured, so the wire format is unchanged for
+	// callers that do not opt in.
+	Provider *providerPreferences `json:"provider,omitempty"`
+}
+
+// providerPreferences mirrors OpenRouter's provider routing controls.
+// See https://openrouter.ai/docs/guides/routing/provider-selection
+type providerPreferences struct {
+	// DataCollection is "deny" to permit only providers that do not store
+	// user data. OpenRouter's default is "allow".
+	DataCollection string `json:"data_collection,omitempty"`
+
+	// ZDR restricts routing to Zero Data Retention endpoints.
+	ZDR bool `json:"zdr,omitempty"`
+}
+
+// buildProviderPreferences returns nil when nothing is restricted, so the
+// "provider" key is omitted from the request body entirely.
+func (c *Client) buildProviderPreferences() *providerPreferences {
+	if !c.denyDataCollection && !c.requireZeroDataRetention {
+		return nil
+	}
+
+	preferences := &providerPreferences{
+		ZDR: c.requireZeroDataRetention,
+	}
+
+	if c.denyDataCollection {
+		preferences.DataCollection = "deny"
+	}
+
+	return preferences
 }
 
 type message struct {
@@ -101,6 +149,7 @@ func (c *Client) Generate(
 				Content: prompt,
 			},
 		},
+		Provider: c.buildProviderPreferences(),
 	}
 
 	body, err := json.Marshal(payload)

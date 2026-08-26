@@ -417,6 +417,10 @@ func runResume(
 			APIKey:  apiKey,
 			Model:   resumeConfig.LLM.Model,
 			BaseURL: resumeConfig.LLM.BaseURL,
+			DenyDataCollection: resumeConfig.LLM.Privacy.
+				DenyDataCollection,
+			RequireZeroDataRetention: resumeConfig.LLM.Privacy.
+				RequireZeroDataRetention,
 		},
 	)
 	if err != nil {
@@ -673,6 +677,10 @@ func runApplication(jobID int64, cfg *config.Config, db *database.DB) {
 			APIKey:  apiKey,
 			Model:   resumeConfig.LLM.Model,
 			BaseURL: resumeConfig.LLM.BaseURL,
+			DenyDataCollection: resumeConfig.LLM.Privacy.
+				DenyDataCollection,
+			RequireZeroDataRetention: resumeConfig.LLM.Privacy.
+				RequireZeroDataRetention,
 		},
 	)
 	if err != nil {
@@ -875,6 +883,10 @@ func runQuestionnaire(
 			APIKey:  apiKey,
 			Model:   resumeConfig.LLM.Model,
 			BaseURL: resumeConfig.LLM.BaseURL,
+			DenyDataCollection: resumeConfig.LLM.Privacy.
+				DenyDataCollection,
+			RequireZeroDataRetention: resumeConfig.LLM.Privacy.
+				RequireZeroDataRetention,
 		},
 	)
 	if err != nil {

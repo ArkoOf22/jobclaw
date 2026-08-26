@@ -9,7 +9,8 @@ credentials.json
 
 # ---- Build artifacts ----
 bin/
-jobclaw
+# Root-anchored: the compiled binary only. A bare "jobclaw" pattern would also
+# match the cmd/jobclaw source directory.
 /jobclaw
 
 # ---- Go tooling ----
