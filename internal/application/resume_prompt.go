@@ -113,11 +113,20 @@ Job ID:
 	prompt.WriteString(strings.TrimSpace(j.Location))
 	prompt.WriteString("\n\n")
 
-	// Descriptions are stored as escaped HTML. Sending them raw bills the model
-	// to read markup, so normalise to plain text and drop employer boilerplate
-	// before including it. The description is only a relevance signal, per the
-	// rules above, so nothing factual is lost.
-	description := TrimJobDescription(
+	// Descriptions are stored as escaped HTML, so normalise to plain text: a
+	// single "<" is stored as "&lt;" and a non-breaking space as eleven
+	// characters. That is a pure saving, since stripping markup removes no
+	// information and the model gets a cleaner prompt.
+	//
+	// Boilerplate section dropping is deliberately NOT applied. It is
+	// implemented and tested in TrimJobDescription, but measured against
+	// gemini-2.5-flash it saves about $0.10 a month while output tokens are 72%
+	// of the cost. A single regeneration also produced fewer skill mentions
+	// (Go 5 to 3, Kafka 3 to 2), which may be run-to-run variance but points the
+	// wrong way for ATS keyword density. Not worth the risk at that price.
+	//
+	// The cap still applies, to bound pathological descriptions.
+	description := capJobDescription(
 		NormalizeJobDescription(j.Description),
 		maxJobDescriptionChars,
 	)

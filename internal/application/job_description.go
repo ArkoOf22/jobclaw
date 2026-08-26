@@ -280,3 +280,40 @@ func looksLikeHeading(paragraph string) bool {
 
 	return true
 }
+
+// capJobDescription bounds a description without dropping sections.
+//
+// Used in place of TrimJobDescription for resume prompts: normalisation is a
+// free saving, but discarding employer boilerplate is not worth a possible
+// reduction in skill keyword density when the saving is around $0.10 a month.
+// The cut lands on a paragraph boundary so a requirement is never severed
+// mid-sentence.
+func capJobDescription(text string, maxChars int) string {
+	if maxChars <= 0 {
+		maxChars = 6000
+	}
+
+	if len(text) <= maxChars {
+		return text
+	}
+
+	var builder strings.Builder
+
+	for _, paragraph := range strings.Split(text, "\n\n") {
+		if builder.Len()+len(paragraph)+2 > maxChars {
+			break
+		}
+
+		if builder.Len() > 0 {
+			builder.WriteString("\n\n")
+		}
+
+		builder.WriteString(paragraph)
+	}
+
+	if builder.Len() == 0 {
+		return strings.TrimSpace(text[:maxChars])
+	}
+
+	return builder.String()
+}
