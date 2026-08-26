@@ -36,9 +36,13 @@ func classifyQuestionField(question string) string {
 		strings.Contains(q, "legally authorized"):
 		return "work_authorization"
 
+	// "sponsor" alone is needed because employers phrase this as "sponsor you
+	// for a work permit" rather than using the word "sponsorship".
 	case strings.Contains(q, "visa sponsorship"),
 		strings.Contains(q, "require sponsorship"),
-		strings.Contains(q, "sponsorship"):
+		strings.Contains(q, "sponsorship"),
+		strings.Contains(q, "sponsor"),
+		strings.Contains(q, "work permit"):
 		return "visa_sponsorship"
 
 	case strings.Contains(q, "willing to relocate"),
