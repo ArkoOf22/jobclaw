@@ -55,7 +55,10 @@ job_preferences:
       - "Co-op"
       # Seniority well above two years of experience.
       - "Staff Engineer"
+      - "Staff"
+      - "Senior Staff"
       - "Principal Engineer"
+      - "Principal"
       - "Engineering Manager"
       - "Director"
       - "Head of"
@@ -63,6 +66,13 @@ job_preferences:
       - "Support Engineer"
       - "Implementation Engineer"
       - "Technical Support Engineer"
+      # Women/diversity-specific programmes.
+      - "Women"
+      - "Female"
+      - "She"
+      - "Her"
+      - "Returnship"
+      - "Women in Tech"
 
   locations:
     preferred:
