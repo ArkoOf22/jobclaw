@@ -198,6 +198,22 @@ func (s *Scorer) Score(
 		recommendation = RecommendationSkip
 	}
 
+	// A role demanding years the candidate does not have is not a weak match, it
+	// is the wrong job. Scoring it low is not enough: a strong stack-and-domain
+	// fit still clears the threshold on the other components, which is how "5+
+	// years" roles reached the shortlist. Veto it outright.
+	if exceedsCandidateExperience(text, s.candidate.Experience.TotalYears) {
+		recommendation = RecommendationSkip
+	}
+
+	// Same reasoning for geography. A San Francisco or Dublin role is not a
+	// slightly worse Bangalore role, it is unreachable, so a low location score
+	// that other components paper over is the wrong model. Veto on a positive
+	// foreign signal.
+	if isOutsidePreferredCountry(j.Location) {
+		recommendation = RecommendationSkip
+	}
+
 	return Result{
 		OverallScore:         overall,
 		SkillsScore:          skills,

@@ -457,7 +457,9 @@ func runDiscover(
 	cfg *config.Config,
 	db *database.DB,
 ) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	// Discovery now searches each role as its own query across several boards, so
+	// a run is a sequence of scrapes rather than one call. Give it room.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
 	repository := job.NewSQLiteRepository(db)

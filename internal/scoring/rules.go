@@ -207,6 +207,71 @@ func containsAny(text string, terms []string) bool {
 	return false
 }
 
+// experienceStretchYears is how far above their own experience a candidate is
+// assumed willing to reach. A two-year engineer is a realistic applicant for a
+// "3-4 years" posting but not a "5+ years" one, so the veto fires above this.
+const experienceStretchYears = 2.0
+
+// exceedsCandidateExperience reports whether the posting explicitly demands
+// substantially more experience than the candidate has.
+//
+// It fires only on an explicit figure in the text. A posting that states no
+// requirement is deliberately not vetoed here: seniority implied by a title with
+// no stated years is caught by the excluded-role list instead. Splitting the two
+// keeps each rule simple and its reason legible.
+func exceedsCandidateExperience(text string, candidateYears float64) bool {
+	requiredMin, found := extractMinimumYears(text)
+	if !found {
+		return false
+	}
+
+	return requiredMin > candidateYears+experienceStretchYears
+}
+
+// indiaLocationTokens are the words that positively identify a role as being in
+// India (or India-remote). Matched as whole words, so "ind" hits "Bangalore,
+// IND" without also claiming "Indiana".
+var indiaLocationTokens = []string{
+	"india", "ind", "bengaluru", "bangalore", "hyderabad", "pune",
+	"mumbai", "gurgaon", "gurugram", "delhi", "noida", "chennai",
+	"kolkata", "ahmedabad", "karnataka",
+}
+
+// foreignLocationTokens positively identify a role as being outside India. Kept
+// to whole-word matches for the same reason: "us" must not match "Columbus".
+var foreignLocationTokens = []string{
+	"united states", "usa", "us", "canada", "ireland",
+	"united kingdom", "uk", "singapore", "germany", "france",
+	"netherlands", "australia", "japan", "china", "brazil", "mexico",
+	"poland", "spain", "portugal", "philippines", "indonesia",
+	"vietnam", "malaysia", "thailand", "emea", "americas", "apac",
+	"europe", "toronto", "london", "dublin", "seattle", "chicago",
+	"austin", "berlin", "amsterdam", "sydney", "dubai", "uae",
+	"new york", "san francisco",
+}
+
+// isOutsidePreferredCountry vetoes a role that carries a positive foreign-country
+// signal and no India signal.
+//
+// The asymmetry is deliberate. An empty location, or one that names only a city
+// the lists do not know, is left alone rather than guessed at: absence of
+// evidence is not evidence of a foreign posting. And an India signal always wins,
+// so "Bengaluru, India (US shift)" or "Bangalore, IND; Remote US" stays. Only a
+// location that is foreign and gives no reason to think otherwise is dropped,
+// which is what keeps "Remote - Ireland" and "US-Remote" off the sheet.
+func isOutsidePreferredCountry(location string) bool {
+	location = strings.TrimSpace(location)
+	if location == "" {
+		return false
+	}
+
+	if containsAny(location, indiaLocationTokens) {
+		return false
+	}
+
+	return containsAny(location, foreignLocationTokens)
+}
+
 func extractMinimumYears(text string) (float64, bool) {
 	words := strings.Fields(text)
 
