@@ -19,6 +19,7 @@ import (
 	"jobclaw/internal/discovery"
 	"jobclaw/internal/discovery/greenhouse"
 	"jobclaw/internal/discovery/jobspy"
+	"jobclaw/internal/drive"
 	"jobclaw/internal/job"
 	"jobclaw/internal/llm/openrouter"
 	"jobclaw/internal/scoring"
