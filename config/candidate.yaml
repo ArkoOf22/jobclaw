@@ -1,6 +1,16 @@
 candidate:
   name: "Arkodeep Koley"
 
+  # Header details for the rendered resume. Identity, not tailoring input: the
+  # model never sees or changes these. Fill linkedin/github/leetcode to have them
+  # appear in the header; empty fields are omitted.
+  contact:
+    email: "arkodeepkoley123@gmail.com"
+    phone: "+917478156546"
+    linkedin: ""
+    github: ""
+    leetcode: ""
+
   current_role:
     title: "Software Development Engineer"
     company: "Twid"

@@ -603,12 +603,15 @@ func runResume(
 	cfg *config.Config,
 	db *database.DB,
 ) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	// LLM tailoring, then two pdflatex passes, then an upload. Wider than the
+	// old text-only path.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	jobRepo := job.NewSQLiteRepository(db)
 
 	resumeConfig := cfg.Resume.Resume
+	candidate := cfg.Candidate.Candidate
 
 	apiKey := os.Getenv(resumeConfig.LLM.APIKeyEnv)
 	if apiKey == "" {
@@ -631,42 +634,41 @@ func runResume(
 		},
 	)
 
-	promptBuilder := application.NewResumePromptBuilder(resumeSource)
-
 	llmClient, err := openrouter.NewClient(
 		openrouter.Config{
-			APIKey:  apiKey,
-			Model:   resumeConfig.LLM.Model,
-			BaseURL: resumeConfig.LLM.BaseURL,
-			DenyDataCollection: resumeConfig.LLM.Privacy.
-				DenyDataCollection,
-			RequireZeroDataRetention: resumeConfig.LLM.Privacy.
-				RequireZeroDataRetention,
+			APIKey:                   apiKey,
+			Model:                    resumeConfig.LLM.Model,
+			BaseURL:                  resumeConfig.LLM.BaseURL,
+			DenyDataCollection:       resumeConfig.LLM.Privacy.DenyDataCollection,
+			RequireZeroDataRetention: resumeConfig.LLM.Privacy.RequireZeroDataRetention,
 		},
 	)
 	if err != nil {
 		log.Fatalf("initialize resume LLM: %v", err)
 	}
 
-	generator := application.NewLLMResumeGenerator(
-		jobRepo,
-		promptBuilder,
-		llmClient,
+	compiler := application.NewPdfLatexCompiler(
+		getEnvOrDefault("JOBCLAW_PDFLATEX_BIN", "pdflatex"),
 	)
 
-	outputPath := filepath.Join(
+	generator := application.NewLaTeXResumeGenerator(
+		jobRepo,
+		resumeSource,
+		llmClient,
+		compiler,
+		resumeContactFromConfig(candidate),
+		resumeEducationFromConfig(candidate),
+	)
+
+	workDir := filepath.Join(
 		"data",
 		"applications",
 		strconv.FormatInt(jobID, 10),
 		"resume",
-		"tailored_resume.txt",
 	)
 
-	if err := generator.GenerateTailoredResume(
-		ctx,
-		jobID,
-		outputPath,
-	); err != nil {
+	artifacts, err := generator.GenerateResumePDF(ctx, jobID, workDir)
+	if err != nil {
 		log.Fatalf("generate tailored resume: %v", err)
 	}
 
@@ -674,18 +676,128 @@ func runResume(
 	fmt.Println("────────────────────────────")
 	fmt.Printf("Job ID:     %d\n", jobID)
 	fmt.Printf("Model:      %s\n", resumeConfig.LLM.Model)
-	fmt.Printf("Output:     %s\n", outputPath)
+	fmt.Printf("PDF:        %s\n", artifacts.PDFPath)
+	fmt.Printf("Text:       %s\n", artifacts.TextPath)
 
-	// Record the artifact on the sheet so the row shows it is ready to use.
-	// Best-effort: the resume already exists on disk regardless.
+	// Upload the PDF to Drive when configured, so the candidate can open it from
+	// their phone straight off the sheet. Best-effort: the PDF stands on disk
+	// regardless, and the sheet falls back to the local path.
+	resumeLink := artifacts.PDFPath
+
+	if link := uploadResumeToDrive(
+		ctx,
+		jobRepo,
+		jobID,
+		candidate.Name,
+		artifacts.PDFPath,
+	); link != "" {
+		resumeLink = link
+		fmt.Printf("Drive:      %s\n", link)
+	}
+
 	updateSheetStatus(
 		context.Background(),
 		jobID,
 		sheet.RowUpdate{
 			Status:     sheetStatusResumeReady,
-			ResumeLink: outputPath,
+			ResumeLink: resumeLink,
 		},
 	)
+}
+
+// resumeContactFromConfig maps the candidate's config identity into the render
+// contact. These are facts the model never sees.
+func resumeContactFromConfig(c config.Candidate) application.ResumeContact {
+	return application.ResumeContact{
+		Name:     c.Name,
+		Phone:    c.Contact.Phone,
+		Email:    c.Contact.Email,
+		LinkedIn: c.Contact.LinkedIn,
+		GitHub:   c.Contact.GitHub,
+		LeetCode: c.Contact.LeetCode,
+	}
+}
+
+// resumeEducationFromConfig builds the education section from config. One entry
+// today; a slice so more can be added without a signature change.
+func resumeEducationFromConfig(c config.Candidate) []application.ResumeEducation {
+	e := c.Education
+
+	if strings.TrimSpace(e.Institution) == "" {
+		return nil
+	}
+
+	dates := ""
+	if e.GraduationYear > 0 {
+		dates = strconv.Itoa(e.GraduationYear)
+	}
+
+	degree := e.Degree
+	if e.CGPA > 0 {
+		degree = fmt.Sprintf("%s  CGPA: %.2f", e.Degree, e.CGPA)
+	}
+
+	return []application.ResumeEducation{
+		{
+			Institution:  e.Institution,
+			Dates:        dates,
+			DegreeAndGPA: degree,
+		},
+	}
+}
+
+// uploadResumeToDrive uploads the compiled PDF and returns a viewable link, or
+// an empty string if upload is unconfigured or fails. Never fatal: a resume that
+// exists locally is still usable.
+func uploadResumeToDrive(
+	ctx context.Context,
+	jobRepo *job.SQLiteRepository,
+	jobID int64,
+	candidateName string,
+	pdfPath string,
+) string {
+	uploader := drive.NewUploader(drive.Config{
+		Account:        strings.TrimSpace(os.Getenv("JOBCLAW_SHEET_ACCOUNT")),
+		Binary:         getEnvOrDefault("JOBCLAW_GOG_BIN", "gog"),
+		ParentFolderID: strings.TrimSpace(os.Getenv("JOBCLAW_RESUME_DRIVE_FOLDER")),
+	})
+
+	result, err := uploader.Upload(ctx, pdfPath, resumeFileName(
+		ctx,
+		jobRepo,
+		jobID,
+		candidateName,
+	))
+	if err != nil {
+		fmt.Printf("Drive:      not uploaded (%v)\n", err)
+
+		return ""
+	}
+
+	return result.Link
+}
+
+// resumeFileName builds a human-friendly Drive filename, using the company when
+// the job can be loaded and falling back to the job ID otherwise.
+func resumeFileName(
+	ctx context.Context,
+	jobRepo *job.SQLiteRepository,
+	jobID int64,
+	candidateName string,
+) string {
+	name := strings.TrimSpace(candidateName)
+	if name == "" {
+		name = "Resume"
+	}
+
+	if j, err := jobRepo.GetByID(ctx, jobID); err == nil && j != nil {
+		company := strings.TrimSpace(j.Company)
+		if company != "" {
+			return fmt.Sprintf("%s - %s.pdf", name, company)
+		}
+	}
+
+	return fmt.Sprintf("%s - job %d.pdf", name, jobID)
 }
 
 func runPrepare(
