@@ -112,7 +112,8 @@ func parseUploadResult(output []byte) (Result, error) {
 		return Result{}, fmt.Errorf("gog drive upload produced no output")
 	}
 
-	// Try the bare resource first, then a common {"result": {...}} envelope.
+	// gog wraps the created resource differently across commands: upload nests it
+	// under "file", other commands use "result" or the bare object. Try each.
 	var direct gogUploadResponse
 
 	if err := json.Unmarshal(trimmed, &direct); err == nil && direct.ID != "" {
@@ -120,12 +121,18 @@ func parseUploadResult(output []byte) (Result, error) {
 	}
 
 	var envelope struct {
+		File   gogUploadResponse `json:"file"`
 		Result gogUploadResponse `json:"result"`
 	}
 
-	if err := json.Unmarshal(trimmed, &envelope); err == nil &&
-		envelope.Result.ID != "" {
-		return resultFrom(envelope.Result), nil
+	if err := json.Unmarshal(trimmed, &envelope); err == nil {
+		if envelope.File.ID != "" {
+			return resultFrom(envelope.File), nil
+		}
+
+		if envelope.Result.ID != "" {
+			return resultFrom(envelope.Result), nil
+		}
 	}
 
 	return Result{}, fmt.Errorf(
