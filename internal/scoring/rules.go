@@ -234,7 +234,10 @@ func exceedsCandidateExperience(text string, candidateYears float64) bool {
 var indiaLocationTokens = []string{
 	"india", "ind", "bengaluru", "bangalore", "hyderabad", "pune",
 	"mumbai", "gurgaon", "gurugram", "delhi", "noida", "chennai",
-	"kolkata", "ahmedabad", "karnataka",
+	"kolkata", "ahmedabad", "karnataka", "telangana", "kerala",
+	"kochi", "cochin", "trivandrum", "coimbatore", "jaipur", "indore",
+	"nagpur", "chandigarh", "mysore", "mysuru", "vizag",
+	"visakhapatnam", "thane", "nashik", "vadodara", "surat",
 }
 
 // foreignLocationTokens positively identify a role as being outside India. Kept
@@ -250,15 +253,22 @@ var foreignLocationTokens = []string{
 	"new york", "san francisco",
 }
 
-// isOutsidePreferredCountry vetoes a role that carries a positive foreign-country
-// signal and no India signal.
+// isOutsidePreferredCountry vetoes a role the candidate cannot take because it is
+// not in India.
 //
-// The asymmetry is deliberate. An empty location, or one that names only a city
-// the lists do not know, is left alone rather than guessed at: absence of
-// evidence is not evidence of a foreign posting. And an India signal always wins,
-// so "Bengaluru, India (US shift)" or "Bangalore, IND; Remote US" stays. Only a
-// location that is foreign and gives no reason to think otherwise is dropped,
-// which is what keeps "Remote - Ireland" and "US-Remote" off the sheet.
+// An India signal always wins first, so "Bengaluru, India (US shift)" or
+// "Bangalore, IND; Remote US" stays. After that:
+//
+//   - A remote role with no India signal is vetoed. A denylist of countries can
+//     never be complete ("Remote - Estonia" is the case that proved it), and a
+//     remote posting that does not say India is, for this candidate, not India.
+//     Genuine India-remote roles almost always say so ("Remote, India").
+//   - A non-remote role is vetoed only on an explicit foreign signal, since an
+//     unrecognised onsite city with no country is more likely a smaller Indian
+//     city the allowlist does not name than a foreign one, given the search is
+//     already constrained to India.
+//
+// An empty location is never vetoed: absence of evidence is not evidence.
 func isOutsidePreferredCountry(location string) bool {
 	location = strings.TrimSpace(location)
 	if location == "" {
@@ -267,6 +277,10 @@ func isOutsidePreferredCountry(location string) bool {
 
 	if containsAny(location, indiaLocationTokens) {
 		return false
+	}
+
+	if strings.Contains(strings.ToLower(location), "remote") {
+		return true
 	}
 
 	return containsAny(location, foreignLocationTokens)
