@@ -1,1017 +1,221 @@
 # JobClaw
 
-> An approval-gated, state-machine-driven job discovery and application automation system.
+> An approval-gated job discovery and application system. It finds relevant jobs, scores them, prepares tailored resumes, and tracks what you applied to — while leaving every consequential decision to you.
 
-## Vision
+JobClaw automates the repetitive half of a job search (searching, filtering, scoring, resume tailoring) and stops at a hard human gate before anything consequential happens. It never applies on your behalf, and it never invents facts about you.
 
-JobClaw is a personal job-search operating system designed to automate repetitive work while
-preserving human control over consequential decisions.
-
-The goal is not to blindly apply to every job. The goal is to build a reliable system that can:
-
-- discover jobs from multiple sources;
-- filter irrelevant opportunities;
-- score jobs;
-- require approval before progressing;
-- create applications;
-- generate truthful, tailored resumes;
-- understand application forms;
-- ingest and classify questionnaires;
-- resolve answers from verified candidate data;
-- prepare submission payloads;
-- validate readiness;
-- submit through supported platform adapters;
-- record submission outcomes;
-- recover safely from failures and ambiguous external results.
-
-The north star is:
-
-> Automate repetitive work, preserve human control, never invent candidate information, and make
-> consequential state transitions observable and recoverable.
+It runs as a Go service on a small EC2 host, discovers jobs on a schedule, publishes a shortlist to a Google Sheet you read on your phone, and is driven day to day through a Telegram bot.
 
 ---
 
-## Design Principles
-
-### Human approval before consequential actions
-
-Job discovery can be automated. Application progression is deliberately gated.
+## The model: two halves, one wall
 
 ```text
-Discover → Score → Approve → Create → Prepare → Validate → Submit
+   AUTOMATIC (every 6 hours)                 YOU DECIDE (via Telegram / sheet)
+   ─────────────────────────────            ───────────────────────────────────
+   discover → score → sheet sync    ──▶      review → resume → apply by hand → mark
 ```
 
-### Preserve candidate truth
+Everything up to a shortlist happens on its own. Everything after it — spending a paid model call on a resume, applying, recording an outcome — needs you. The wall is the `APPROVED` boundary between a *job* and an *application*, and it is load-bearing.
 
-Resume tailoring may reword, reorder, and select relevant information according to configuration, but
-the architecture is intended to prevent invented experience and facts.
+---
 
-### Separate preparation from execution
+## How you use it (Telegram)
 
-Preparing an application is different from externally submitting it.
+You talk to the bot in plain English. It recognises anything job-related and runs JobClaw behind the scenes through a restricted wrapper — you never type raw commands.
+
+| You say | What happens |
+| :--- | :--- |
+| "what's new" / "show my shortlist" | Reads the live shortlist: company, title, location, score |
+| "make me a resume for the Stripe role" | Tailors a resume, compiles a PDF, uploads it to Google Drive, puts the link on the sheet |
+| "I applied to Stripe" | Marks that job applied so it stops resurfacing |
+| "skip the Kredivo one" | Rejects it |
+| "prepare the GitLab application" | Fetches the form's questions and answers them from your verified answer bank |
+
+Your daily loop:
+
+1. The sheet fills with new roles automatically (no action from you).
+2. On Telegram: **"what's new"** → glance at the top few.
+3. **"make me a resume for [company]"** → get the Drive link.
+4. Open the job link, apply by hand using that PDF.
+5. **"applied to [company]"** → done, it won't nag you again.
+
+The bot reads live data on every request, so figures are always current.
+
+---
+
+## The one thing it will never do: auto-submit
+
+**JobClaw does not submit applications, and this is permanent.** Every major ATS blocks programmatic submission — Greenhouse with reCAPTCHA Enterprise plus a per-request token, Lever with hCaptcha, Ashby with reCAPTCHA and explicit anti-automation flags, Workday with per-employer accounts. This was investigated empirically; it is an industry norm, not a gap in JobClaw.
+
+So the terminal step is always a human one: JobClaw hands you a tailored resume and the apply URL, you submit on the employer's own form, then you tell the bot "applied." A Greenhouse submission adapter exists behind the platform boundary, but the realistic and permanent adapter is `MANUAL`.
+
+---
+
+## What runs automatically
+
+A systemd timer (`jobclaw-discover.timer`) fires four times a day (00/06/12/18 IST, 72-hour window). Each run does **discover → score → sheet sync** and then stops. It never crosses the approval wall.
+
+### Discovery
+
+Sources run concurrently behind a common `Source` interface; one failing source never stops the others.
+
+- **JobSpy** (MCP server on loopback) scrapes LinkedIn, Indeed, Glassdoor, and Naukri. Each target role is sent as its **own clean query** (not concatenated), Indeed is pinned to India, and results are relevance-filtered against the shared matcher.
+- **Greenhouse** public Job Board API across ~12 company boards (Stripe, PhonePe, GitLab, Twilio, Airbnb, Postman, CockroachLabs, Druva, Slice, Wise, MongoDB, Zscaler). No credentials needed for reads.
+
+### Scoring
+
+Each job gets component scores (skills, role, experience, domain, location, company, compensation) normalised over the signals actually present, so a source that never reports salary is not penalised for it. On top of the score sit **hard vetoes** that a strong score cannot override:
+
+- **Experience** — a posting explicitly demanding more than *candidate years + 2* is skipped.
+- **Location** — a foreign-country signal with no India signal, or a bare "remote" with no India mention, is skipped.
+- **Excluded titles** — Senior / Sr / Lead / Staff / Principal / Manager and non-permanent roles (intern, trainee) are skipped.
+
+Jobs at or above the shortlist threshold (currently 60/100) are synced to the sheet.
+
+### The review sheet
+
+The shortlist is written to a Google Sheet — sortable, readable on the mobile app — via the `gog` CLI (already OAuth-authorised, no GCP service account). Columns include job ID, score, verdict, company, title, location, URL, status, and the resume link. SQLite remains the source of truth; the sheet is a pure view, and rows are appended only after a successful write.
+
+---
+
+## Resume tailoring → PDF → Drive
+
+Asking for a resume runs a single pipeline:
 
 ```text
-Application preparation ≠ External submission
+master resume + job  →  LLM (structured JSON, fact-guarded)  →  LaTeX template  →  pdflatex  →  PDF  →  Google Drive  →  link on sheet
 ```
 
-Prepared data can therefore be validated and inspected before side effects occur.
+- The model returns the tailored resume as **structured JSON drawn strictly from your master resume**. The job description is a relevance signal only, never evidence of a skill.
+- The output is **fact-guarded**: every metric, company, date, and technology must trace back to the master resume, or it is rejected and regenerated.
+- Contact details and education come from `config/candidate.yaml` and never pass through the model.
+- The JSON is rendered into a fixed LaTeX template and compiled with `pdflatex` (chosen over XeTeX-based engines because the template uses pdfTeX features for clean ATS text extraction).
+- The PDF is uploaded to a "JobClaw Resumes" Drive folder; the link lands on the sheet so you can open it from your phone.
 
-### Treat external systems as unreliable
-
-Network and ATS failures can leave an application outcome unknown. JobClaw models attempts, failures,
-recovery, and ambiguous outcomes instead of assuming every submission is simply success or failure.
-
-### Make state explicit
-
-Important workflow transitions are persisted and represented explicitly.
-
-### Make automation observable
-
-Repositories, events, prepared data, submission attempts, errors, and tests make the workflow
-inspectable.
+Models are pinned in `config/resume.yaml`: `google/gemini-2.5-flash` for resume prose, `mistralai/mistral-small-24b-instruct-2501` for questionnaire answers. Both run on Zero-Data-Retention endpoints, enforced per request.
 
 ---
 
-# End-to-End Architecture
+## Questionnaires and the answer bank
 
-```text
-                         JOB SOURCES
-                  ┌──────────┼──────────┐
-                  │          │          │
-                JobSpy   Greenhouse   Future
-                  │          │          │
-                  └──────────┼──────────┘
-                             ▼
-                  ┌──────────────────────┐
-                  │  Discovery Service   │
-                  │ Concurrent execution │
-                  └──────────┬───────────┘
-                             ▼
-                  ┌──────────────────────┐
-                  │   Shared Matcher     │
-                  │ Roles / Skills       │
-                  │ Location / Remote    │
-                  └──────────┬───────────┘
-                             ▼
-                  ┌──────────────────────┐
-                  │    Job Repository    │
-                  │       SQLite         │
-                  └──────────┬───────────┘
-                             ▼
-                  ┌──────────────────────┐
-                  │       Scoring        │
-                  └──────────┬───────────┘
-                             ▼
-                  ┌──────────────────────┐
-                  │    Approval Gate     │
-                  │  Human-controlled    │
-                  └──────────┬───────────┘
-                             ▼
-                  ┌──────────────────────┐
-                  │ Application Service  │
-                  └──────────┬───────────┘
-                             ▼
-              ┌──────────────┴──────────────┐
-              ▼                             ▼
-     Resume Generation              Form / Questionnaire
-     Master resume                  Greenhouse forms
-     Prompt builder                 Question extraction
-     LLM / OpenRouter               Field classification
-              └──────────────┬──────────────┘
-                             ▼
-                  ┌──────────────────────┐
-                  │  Answer Resolution   │
-                  │ Verified answer bank │
-                  └──────────┬───────────┘
-                             ▼
-                  ┌──────────────────────┐
-                  │ Prepared Submission  │
-                  │        Data          │
-                  └──────────┬───────────┘
-                             ▼
-                  ┌──────────────────────┐
-                  │ Readiness Validation │
-                  └──────────┬───────────┘
-                             ▼
-                  ┌──────────────────────┐
-                  │ Submission Routing   │
-                  └──────────┬───────────┘
-                             ▼
-                  ┌──────────────────────┐
-                  │ Greenhouse Adapter   │
-                  └──────────┬───────────┘
-                             ▼
-                  ┌──────────────────────┐
-                  │ Attempt / Recovery   │
-                  │ Success / Failure /  │
-                  │ Ambiguous outcome    │
-                  └──────────────────────┘
-```
+For forms with application questions (e.g. Greenhouse), JobClaw fetches the questions from the public API, classifies each field, and resolves it against a **verified answer bank** — a store of candidate facts the operator has confirmed. Unresolved or LLM-generated answers are surfaced for review rather than guessed, and readiness validation blocks a preparation that cannot confirm its questionnaire was ingested, its answers are non-empty, and its resume file actually exists.
 
 ---
 
-# What Has Been Built
-
-## 1. Job Discovery
-
-The discovery layer is based on a common source abstraction:
-
-```go
-type Source interface {
-    Name() string
-    Discover(ctx context.Context, request Request) ([]job.Job, error)
-}
-```
-
-Current discovery capabilities:
-
-- JobSpy integration;
-- Greenhouse integration;
-- multiple Greenhouse boards;
-- Greenhouse board metadata/company resolution;
-- full job content fetching;
-- common job representation;
-- repository upsert;
-- concurrent source execution;
-- source failure isolation.
-
-The discovery service runs sources concurrently. A failure from one source does not prevent other
-sources from returning results.
-
----
-
-## 2. Shared Job Matcher
-
-Matching logic has been extracted into:
-
-```text
-internal/discovery/matcher.go
-```
-
-It handles:
-
-- role matching;
-- skill/technology matching;
-- multi-word role intent;
-- punctuation normalization;
-- location filtering;
-- remote opportunities;
-- remote-only requests.
-
-The matcher deliberately avoids false positives where a role phrase appears only incidentally in a
-description.
-
-Examples of behavior tested include:
-
-- Backend Engineer matches Backend Engineer;
-- Golang can match title or description;
-- Engineering Manager does not incorrectly match Backend Engineer;
-- punctuation does not break token matching;
-- location mismatches are filtered;
-- remote jobs can satisfy appropriate location preferences;
-- remote-only requests reject non-remote jobs.
-
----
-
-## 3. Concurrent Discovery
-
-Discovery sources now execute concurrently.
-
-Conceptually:
-
-```text
-Source A ──┐
-Source B ──┼── concurrent execution ──→ results
-Source C ──┘
-```
-
-Benefits:
-
-- faster network-bound discovery;
-- one failing source does not stop the others;
-- deterministic result ordering;
-- source duration tracking.
-
-Tests also use a concurrency-safe fake repository.
-
----
-
-## 4. Job Persistence and Lifecycle
-
-The job layer provides persistent internal identity independent of external platforms.
-
-Supported concepts include:
-
-- source and external ID lookup;
-- internal ID lookup;
-- listing;
-- upsert;
-- status updates.
-
----
-
-## 5. Scoring and Company Intelligence Foundation
-
-The repository includes:
-
-```text
-internal/scoring/
-internal/company/
-```
-
-These provide the foundation for evaluating opportunities and company-related information before
-application creation.
-
-The intended flow is:
-
-```text
-Discover → Filter → Score → Review → Approve
-```
-
----
-
-## 6. Approval-Gated Applications
-
-Applications are created for approved jobs.
-
-This is an important architectural boundary:
-
-```text
-Discovery does not automatically equal application.
-```
-
-Approval is the control point before expensive or consequential application work proceeds.
-
----
-
-## 7. Resume Generation
-
-The application flow includes:
-
-- master resume source;
-- resume prompt builder;
-- OpenRouter-backed LLM client;
-- LLM resume generator;
-- configuration-driven generation rules.
-
-Configuration models controls around:
-
-- preserving facts;
-- rewording;
-- reordering;
-- skill selection;
-- metric changes;
-- experience invention.
-
-The intended policy is:
-
-> Tailor presentation, not reality.
-
----
-
-## 8. Questionnaire Ingestion
-
-A questionnaire pipeline has been implemented to turn raw application questions into structured
-information.
-
-Completed work includes:
-
-- questionnaire ingestion;
-- question/field classification;
-- improvements to classification;
-- completion of the ingestion pipeline.
-
-This provides the basis for handling arbitrary application forms systematically.
-
----
-
-## 9. Candidate Answer Bank
-
-JobClaw includes a candidate answer repository.
-
-Answers contain concepts such as:
-
-- field key;
-- answer;
-- value type;
-- verification state.
-
-CLI operations exist for:
-
-```text
-answer add
-answer update
-answer list
-```
-
-Verification is important: the system can distinguish trusted candidate information from information
-that should not be blindly reused.
-
----
-
-## 10. Application Preparation and Readiness
-
-The application workflow distinguishes:
-
-```text
-Application created
-        ↓
-Application prepared
-        ↓
-Application ready
-        ↓
-Submission
-```
-
-This prevents the system from treating a partially prepared application as ready for an external
-side effect.
-
----
-
-## 11. Prepared Submission Data
-
-A dedicated prepared submission data layer exists.
-
-Conceptually:
-
-```text
-Application
-+ Resume
-+ Form requirements
-+ Resolved answers
-        ↓
-Prepared Submission Data
-```
-
-Benefits:
-
-- inspectability;
-- validation;
-- debugging;
-- adapter-specific transformation;
-- safer retries.
-
----
-
-## 12. Submission Architecture
-
-The submission system has been developed through several milestones:
-
-- atomic application submission flow;
-- submission attempt state and recovery;
-- ambiguous submission handling;
-- submission adapter routing;
-- prepared submission data;
-- Greenhouse submission adapter.
-
-This is designed to handle the fact that external systems are not perfectly reliable.
-
-For example:
-
-```text
-Request sent
-    ↓
-Remote system may accept
-    ↓
-Network response lost
-    ↓
-Local system cannot safely know outcome
-```
-
-JobClaw therefore treats ambiguity as a real state instead of blindly retrying and risking duplicate
-applications.
-
----
-
-## 13. Greenhouse Discovery
-
-The Greenhouse discovery implementation now:
-
-1. receives a board token;
-2. fetches board metadata;
-3. determines the company name;
-4. fetches jobs with full content;
-5. transforms jobs into the common domain model;
-6. filters jobs through the shared matcher.
-
-Multiple Greenhouse boards are supported, and empty board tokens are ignored.
-
----
-
-## 14. Greenhouse Form Automation
-
-The latest major milestone added:
-
-- Greenhouse URL handling;
-- URL parsing/normalization;
-- Greenhouse application form domain model;
-- form provider abstraction;
-- HTTP-based form provider;
-- form parsing;
-- form validation;
-- integration with the application preparation flow.
-
-This moves Greenhouse beyond simple job discovery toward understanding the application itself.
-
----
-
-## 15. Greenhouse Submission
-
-A dedicated Greenhouse submission adapter exists behind the platform-specific submission
-architecture.
-
-The intended model is:
-
-```text
-Prepared application
-        ↓
-Submission router
-        ↓
-Greenhouse adapter
-        ↓
-External submission
-        ↓
-Attempt state recorded
-```
-
-Future platforms should follow the same architectural boundary instead of putting platform-specific
-behavior inside the core application service.
-
----
-
-# Repository Architecture
+## Repository layout
 
 ```text
 jobclaw/
-│
-├── cmd/
-│   └── jobclaw/
-│       └── main.go              # CLI composition root
-│
+├── cmd/jobclaw/main.go            # CLI composition root — wires everything
 ├── internal/
-│   │
-│   ├── application/
-│   │   ├── application lifecycle
-│   │   ├── resume generation
-│   │   ├── questionnaire ingestion
-│   │   ├── candidate answer bank
-│   │   ├── preparation/readiness
-│   │   ├── prepared submission data
-│   │   ├── submission attempts
-│   │   ├── recovery
-│   │   ├── Greenhouse forms
-│   │   └── Greenhouse submission
-│   │
-│   ├── company/
-│   │   └── company classification
-│   │
-│   ├── config/
-│   │   └── configuration
-│   │
-│   ├── database/
-│   │   └── persistence infrastructure
-│   │
-│   ├── discovery/
-│   │   ├── request
-│   │   ├── source abstraction
-│   │   ├── concurrent service
-│   │   ├── shared matcher
-│   │   ├── greenhouse/
-│   │   │   ├── client
-│   │   │   └── multi-board support
-│   │   └── jobspy/
-│   │
-│   ├── job/
-│   │   └── job domain and repository
-│   │
-│   ├── llm/
-│   │   └── openrouter/
-│   │
-│   └── scoring/
-│       └── job scoring
-│
-├── data/
-│   └── applications/
-│
-├── go.mod
-├── go.sum
-└── README.md
+│   ├── discovery/                 # source abstraction, concurrent service, shared matcher
+│   │   ├── jobspy/                # JobSpy MCP client (per-role search, India-pinned)
+│   │   └── greenhouse/            # public board API client, multi-board
+│   ├── job/                       # job domain, status transitions, SQLite repo
+│   ├── scoring/                   # component scores + hard vetoes
+│   ├── company/                   # evidence-based company classification
+│   ├── application/               # the largest package: application lifecycle,
+│   │                              #   resume generation (text + LaTeX/PDF),
+│   │                              #   questionnaire ingestion, answer bank,
+│   │                              #   preparation/readiness, submission adapters
+│   ├── drive/                     # gog-backed Google Drive uploader
+│   ├── sheet/                     # gog-backed Google Sheet writer
+│   ├── llm/openrouter/            # LLM client (ZDR-enforced)
+│   ├── config/                    # YAML config models
+│   └── database/                  # SQLite connection + migrations
+├── config/                        # candidate.yaml, preferences.yaml, resume.yaml
+├── deploy/                        # systemd units, OpenClaw skill
+└── scripts/                       # scheduled-discovery.sh, jobclaw-agent wrapper, helpers
 ```
+
+Platform-specific complexity (Greenhouse URLs, forms, submission) lives behind platform boundaries; the core application workflow stays platform-independent, and a new ATS plugs in at the same seam.
 
 ---
 
-# CLI Role
+## CLI
 
-The CLI is currently the composition root.
-
-It wires together concrete implementations such as:
+`cmd/jobclaw/main.go` dispatches:
 
 ```text
-SQLite repositories
-        +
-LLM client
-        +
-Resume generator
-        +
-Form provider
-        +
-Submission adapter
-        ↓
-Application services
+discover [--hours N] [--limit N]     score        shortlist        status [--json]
+jobs list        job <id>            approve <id>     reject <id>
+application <jobID>                  resume <jobID>
+answer add|list|update               questionnaire <appID> [--from-greenhouse]
+prepare <appID>                      submit <appID> [--confirm]
+sheet init|sync [--dry-run]          mark <jobID> applied|skipped
+prune [--older-than N] [--confirm]
 ```
 
-This keeps business logic in domain packages and infrastructure/platform-specific code behind
-explicit boundaries.
+`submit` is a dry run by default and only sends with `--confirm`. Exit code `2` means the outcome is **ambiguous** — the application stays locked and is never auto-retried.
+
+### The agent wrapper
+
+Telegram control goes through `scripts/jobclaw-agent`, a restricted allowlist, not the binary directly. It rejects `--confirm` in every form, refuses shell metacharacters, and passes through only safe subcommands (`status`, `shortlist`, `jobs list`, `job`, `answers`, `approve`, `reject`, `application`, `resume`, `questionnaire`, `prepare`, `mark`, `sheet sync`, and `submit` as preview). `discover`, `score`, and `answer add/update` are deliberately not exposed. Adding a new command to the binary does not expose it to the agent until someone adds it here.
 
 ---
 
-# Reliability Model
+## Setup and operations
 
-JobClaw has deliberately prioritized correctness.
+### Runtime
 
-Important properties include:
+- **Build/run host:** EC2 (Ubuntu 22.04), Go 1.26.5. The local macOS checkout is for editing only (Go 1.25.5 cannot build). Access is over SSM Session Manager.
+- **Dependencies:** SQLite via `modernc.org/sqlite` (pure Go, no cgo); `pdflatex` (TeX Live) for resume PDFs; the `gog` CLI for Sheets/Drive; the JobSpy MCP server on `127.0.0.1:8000`.
 
-## Context and timeouts
+### Configuration
 
-Operations use `context.Context`, with timeouts appropriate to their workflows.
+Behaviour is driven by three YAML files in `config/`:
 
-## Atomic submission flow
+- `candidate.yaml` — identity, contact (for the resume header), target roles, skills, experience, education.
+- `preferences.yaml` — locations, excluded titles, domains, tech preferences, and the shortlist threshold.
+- `resume.yaml` — master resume path, tailoring rules, and pinned models.
 
-Submission state is modeled explicitly instead of relying on a single fire-and-forget operation.
+### Environment (`.env` on the host, mode 600)
 
-## Recovery
+| Variable | Purpose |
+| :--- | :--- |
+| `OPENROUTER_API_KEY` | LLM key (name is itself configurable via `resume.yaml`) |
+| `JOBCLAW_GREENHOUSE_BOARDS` | Comma-separated Greenhouse board tokens |
+| `JOBCLAW_SHEET_ID` | Review sheet spreadsheet ID |
+| `JOBCLAW_SHEET_ACCOUNT` | Google account `gog` acts as |
+| `JOBCLAW_RESUME_DRIVE_FOLDER` | Drive folder ID for uploaded resumes |
+| `GOG_KEYRING_PASSWORD` | Unlocks `gog`'s credential keyring (no terminal to prompt from a timer) |
 
-Interrupted or failed workflows can be represented and recovered.
+Optional: `JOBCLAW_SHEET_TAB`, `JOBCLAW_GOG_BIN`, `JOBCLAW_PDFLATEX_BIN`, `JOBCLAW_DB_PATH`, `JOBCLAW_JOBSPY_URL`, `JOBCLAW_GREENHOUSE_BASE_URL`.
 
-## Ambiguous outcomes
-
-Unknown external outcomes are not silently converted into success or failure.
-
-## Source isolation
-
-One failed discovery provider does not stop the remaining providers.
-
----
-
-# Testing and Quality
-
-The project has been continuously validated with:
+### Scheduled discovery
 
 ```bash
-go test ./...
+sudo systemctl list-timers jobclaw-discover.timer   # next run
+sudo systemctl start jobclaw-discover.service        # run one pass now
+journalctl -u jobclaw-discover -n 50                 # logs
+```
+
+The wrapper rebuilds the binary when source is newer, so a deploy cannot silently keep running stale code.
+
+### Build and test (on the EC2 host)
+
+```bash
+go build ./...
 go vet ./...
-```
-
-At the latest checkpoint, both were clean.
-
-Discovery tests cover:
-
-- successful discovery;
-- persistence;
-- source failure isolation;
-- concurrent execution;
-- role matching;
-- skill matching;
-- punctuation normalization;
-- false-positive prevention;
-- location matching;
-- remote behavior.
-
-Greenhouse tests cover:
-
-- discovery;
-- board metadata;
-- matching;
-- multi-board behavior;
-- empty board handling.
-
-The application package also contains extensive tests around preparation, submission, forms, and
-related lifecycle behavior.
-
----
-
-# Completed Milestones
-
-```text
-35de9c7  Add questionnaire ingestion pipeline
-01fb2d3  Improve questionnaire field classification
-dd69f0f  Complete questionnaire ingestion pipeline
-
-b702ee1  Add application preparation and readiness flow
-715d51a  Add atomic application submission flow
-b881fa6  Add submission attempt state and recovery
-751fb63  Add ambiguous submission handling
-bac495f  Add submission adapter routing
-9820526  Add prepared submission data layer
-33821f5  Add Greenhouse submission adapter
-
-a5b0edd  Add Greenhouse discovery and application form automation
-```
-
-The latest documented checkpoint is:
-
-```text
-Commit: a5b0edd
-Branch: main
-Remote: origin/main
-Working tree: clean
-Full test suite: passing
-go vet: passing
+go test ./...
 ```
 
 ---
 
-# What Remains
+## Design principles
 
-The project is not finished. The biggest remaining task is to prove the existing architecture as one
-real vertical slice.
-
-## Immediate priority: end-to-end execution
-
-We need to verify:
-
-```text
-Discover
-    ↓
-Store
-    ↓
-Score
-    ↓
-Approve
-    ↓
-Create application
-    ↓
-Generate tailored resume
-    ↓
-Fetch Greenhouse form
-    ↓
-Extract/classify questions
-    ↓
-Resolve answers
-    ↓
-Prepare submission
-    ↓
-Validate readiness
-    ↓
-Submit
-    ↓
-Record outcome
-```
-
-The focus should be on finding missing orchestration between existing components rather than
-prematurely building more isolated features.
+- **Human approval before consequential actions.** No workspace assets are generated and no submission executes without explicit consent. The `APPROVED` boundary is a hard wall.
+- **Candidate truth.** Tailoring may reword, reorder, and select; it may not invent experience, metrics, or history. Enforced by a fact guard, not just a prompt.
+- **Preparation ≠ execution.** Prepared data is inspectable and validatable before any side effect.
+- **Ambiguity is a real state.** An unknown external outcome stays locked for manual reconciliation; it is never silently converted to success or failure, and never auto-retried.
+- **Source isolation.** One failing discovery provider does not stop the others.
+- **Cost discipline.** Cheap ZDR-compliant models, one model call per resume (feeding both PDF and text), and no speculative generation.
 
 ---
 
-# Future Work
+## Status
 
-## Answer resolution engine
+Operational. Discovery, scoring, the review sheet, the resume-to-PDF-to-Drive pipeline, questionnaire ingestion, and the Telegram control loop all run against real data on the live host. The build, vet, and full test suite pass.
 
-The system should distinguish:
-
-```text
-Known question
-    → use verified answer
-
-Similar known question
-    → map safely
-
-Unknown question
-    → require review
-
-Ambiguous question
-    → do not guess
-```
-
-## Real-world integration validation
-
-Unit tests need to be complemented by carefully controlled validation against real supported systems.
-
-## Resume artifact hardening
-
-Continue improving:
-
-- output validation;
-- artifact storage;
-- application association;
-- submission compatibility.
-
-## Additional ATS adapters
-
-Potential future targets include:
-
-```text
-Lever
-Ashby
-Workday
-SmartRecruiters
-Other supported systems
-```
-
-These should plug into the existing adapter boundaries.
-
-## Better company intelligence
-
-Potential signals:
-
-- company stage;
-- funding;
-- size;
-- industry;
-- hiring velocity;
-- role quality;
-- engineering fit.
-
-## Operational dashboard/reporting
-
-Eventually expose:
-
-```text
-Jobs discovered
-High-scoring jobs
-Jobs awaiting approval
-Applications being prepared
-Ready applications
-Submitted applications
-Failed attempts
-Ambiguous attempts
-Items requiring attention
-```
-
-## Scheduling
-
-The eventual automated discovery loop could be:
-
-```text
-Scheduled run
-    ↓
-Discover jobs
-    ↓
-Deduplicate/upsert
-    ↓
-Match and score
-    ↓
-Present best opportunities
-    ↓
-Wait for approval
-```
-
----
-
-# Roadmap
-
-## Phase 1 — Core Foundation
-
-**Status: Completed**
-
-- job domain;
-- persistence;
-- configuration;
-- lifecycle foundations;
-- scoring foundations.
-
-## Phase 2 — Discovery
-
-**Status: Strong foundation completed**
-
-- source abstraction;
-- JobSpy;
-- Greenhouse;
-- multi-board discovery;
-- shared matching;
-- concurrency.
-
-## Phase 3 — Application Preparation
-
-**Status: Largely completed**
-
-- application creation;
-- resume generation;
-- questionnaires;
-- answer bank;
-- preparation;
-- readiness.
-
-## Phase 4 — Greenhouse Vertical Slice
-
-**Status: Core implementation completed**
-
-- discovery;
-- board metadata;
-- forms;
-- URL handling;
-- submission adapter.
-
-**Next:** prove the complete real-world flow.
-
-## Phase 5 — Operational Automation
-
-**Planned**
-
-- scheduled discovery;
-- approval queues;
-- retries/recovery;
-- reporting;
-- monitoring.
-
-## Phase 6 — Multi-Platform Support
-
-**Planned**
-
-- additional ATS adapters;
-- additional discovery sources.
-
-## Phase 7 — Full Job-Search Operating System
-
-**Long-term**
-
-```text
-Search
-→ Discover
-→ Filter
-→ Understand
-→ Score
-→ Approve
-→ Tailor
-→ Answer
-→ Prepare
-→ Validate
-→ Apply
-→ Track
-→ Recover
-→ Improve
-```
-
----
-
-# How to Read the Codebase
-
-A recommended reading order:
-
-## 1. CLI
-
-```text
-cmd/jobclaw/main.go
-```
-
-Understand how dependencies are wired.
-
-## 2. Job domain
-
-```text
-internal/job/
-```
-
-Understand jobs, repositories, and status transitions.
-
-## 3. Discovery
-
-```text
-internal/discovery/source.go
-internal/discovery/request.go
-internal/discovery/service.go
-internal/discovery/matcher.go
-```
-
-Then inspect:
-
-```text
-internal/discovery/jobspy/
-internal/discovery/greenhouse/
-```
-
-## 4. Scoring and company logic
-
-```text
-internal/scoring/
-internal/company/
-```
-
-## 5. Application workflow
-
-Read `internal/application/` as a pipeline:
-
-```text
-Application
-→ Resume
-→ Questionnaire
-→ Answers
-→ Preparation
-→ Readiness
-→ Submission
-→ Attempt state
-→ Recovery
-```
-
-## 6. Greenhouse integration
-
-Study the Greenhouse implementation as the reference for platform-specific architecture.
-
-The core principle is:
-
-> Platform-specific complexity should live behind platform-specific boundaries while the core
-> application workflow remains platform-independent.
-
----
-
-# Final Goal
-
-JobClaw should eventually behave like this:
-
-```text
-JobClaw discovers opportunities
-        ↓
-Filters obvious noise
-        ↓
-Evaluates relevance
-        ↓
-Candidate approves important actions
-        ↓
-Prepares truthful, tailored application material
-        ↓
-Understands supported application forms
-        ↓
-Resolves known answers safely
-        ↓
-Surfaces unknown/risky questions
-        ↓
-Validates readiness
-        ↓
-Submits through supported adapters
-        ↓
-Records exactly what happened
-        ↓
-Recovers safely from uncertainty
-```
-
-JobClaw is not intended to be a blind mass-application bot.
-
-It is intended to be a **reliable, extensible, state-aware job application system** that reduces
-repetitive work while maintaining control, correctness, transparency, and candidate truth.
-
----
-
-## Current Development Priority
-
-**Prove one complete end-to-end vertical slice before expanding further.**
-
-The immediate target is:
-
-```text
-Discovery
-→ Storage
-→ Scoring
-→ Approval
-→ Application
-→ Resume
-→ Form
-→ Questions
-→ Answers
-→ Preparation
-→ Readiness
-→ Submission
-→ Outcome
-```
-
-Once this complete flow is validated, the architecture will have a strong foundation for expanding to
-additional platforms, scheduling, richer intelligence, and a full personal job-search operating system.
+The submission step is, and will remain, a one-tap human action for the reasons above. Future work is additive: more discovery sources and Greenhouse-style read/form integrations for other ATSes (Lever, Ashby both expose clean public read APIs), richer company intelligence, and operational reporting.
