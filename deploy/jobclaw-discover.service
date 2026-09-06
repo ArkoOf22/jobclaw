@@ -30,6 +30,18 @@ ProtectHome=read-only
 # project directory.
 ReadWritePaths=/home/openclaw/jobclaw
 
+# The sheet sync shells out to `gog`, which keeps its OAuth refresh token in a
+# file-backed keyring under the home directory and takes a lock file to read it.
+# ProtectHome=read-only made that lock unopenable, so every scheduled sync failed
+# with "read-only file system" while manual runs worked, which is why the sheet
+# fell behind without the run ever being marked as failed.
+#
+# gog needs to write here, not just read: it rewrites the stored token whenever
+# the access token is refreshed.
+ReadWritePaths=/home/openclaw/.local/share/gogcli
+ReadWritePaths=/home/openclaw/.local/state/gogcli
+ReadWritePaths=/home/openclaw/.config/gogcli
+
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

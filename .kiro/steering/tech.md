@@ -106,7 +106,7 @@ applicant cannot obtain one, so automated Greenhouse submission is unavailable a
 | `JOBCLAW_DB_PATH` | SQLite database path (has a default). |
 | `JOBCLAW_CANDIDATE_CONFIG` | Override path to `config/candidate.yaml`. |
 | `JOBCLAW_PREFERENCES_CONFIG` | Override path to `config/preferences.yaml`. |
-| `JOBCLAW_GREENHOUSE_BOARDS` | Comma/newline separated board tokens. Empty tokens are ignored. |
+| `JOBCLAW_GREENHOUSE_BOARDS` | Comma/newline separated board tokens. Empty tokens are ignored; a token that 404s is skipped and reported without costing the other boards. |
 | `JOBCLAW_GREENHOUSE_BASE_URL` | Enables the HTTP Greenhouse form provider when set. |
 | `JOBCLAW_GREENHOUSE_API_KEY` | Greenhouse API credential. |
 | `JOBCLAW_JOBSPY_URL` | JobSpy MCP server endpoint. |
@@ -140,10 +140,10 @@ Note `jobs list` shows only the first 20 rows. Use `status` for real totals.
 
 ### Scheduled discovery
 
-`jobclaw-discover.timer` runs discovery then scoring every six hours
-(00/06/12/18 IST, randomized up to 20 minutes, `Persistent=true` so a missed
-window catches up after downtime). It deliberately stops at scoring: approval is a
-human gate, so nothing past it happens unattended.
+`jobclaw-discover.timer` runs discovery, then scoring, then sheet sync every six
+hours (randomized up to 20 minutes, `Persistent=true` so a missed window catches
+up after downtime). It deliberately stops before approval: that is a human gate,
+so nothing past it happens unattended.
 
 ```bash
 sudo systemctl list-timers jobclaw-discover.timer
@@ -154,6 +154,35 @@ journalctl -u jobclaw-discover -n 50
 Units are version-controlled in `deploy/`; the wrapper is
 `scripts/scheduled-discovery.sh`, which rebuilds `bin/jobclaw` when any source
 file is newer so a deploy cannot silently keep running stale code.
+
+**The schedule is written in UTC.** `OnCalendar=*-*-* 00,06,12,18:30:00` lands on
+00:00, 06:00, 12:00 and 18:00 IST, since the host runs UTC and IST is UTC+5:30.
+Do not "simplify" the `:30` away.
+
+There is no per-timer timezone option here: naming a timezone inside `OnCalendar`
+needs systemd 252 and this host runs 249. The unit previously carried
+`OnCalendarTimezone=Asia/Kolkata`, which is not a systemd directive at all. It was
+silently ignored, so the documented IST schedule was really UTC and fired at
+05:30/11:30/17:30/23:30 IST. `systemd-analyze verify` reports unknown keys like
+this; run it after editing a unit.
+
+**The unit is sandboxed, and the sandbox has to account for `gog`.**
+`ProtectHome=read-only` plus `ProtectSystem=strict` means only the paths listed in
+`ReadWritePaths` are writable. Sheet sync shells out to `gog`, which keeps its
+OAuth refresh token in a file-backed keyring under the home directory and takes a
+lock file to read it, so the keyring directories need to be writable too:
+
+```
+ReadWritePaths=/home/openclaw/jobclaw
+ReadWritePaths=/home/openclaw/.local/share/gogcli
+ReadWritePaths=/home/openclaw/.local/state/gogcli
+ReadWritePaths=/home/openclaw/.config/gogcli
+```
+
+Without those, every scheduled sync failed with `read-only file system` on the
+keyring lock while manual runs succeeded, because a manual run has a writable
+home. That asymmetry is what made it hard to spot: the sheet fell behind for days
+and the only evidence was in `journalctl`.
 
 ### Agent / Telegram control
 

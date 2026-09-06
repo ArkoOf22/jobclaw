@@ -367,6 +367,89 @@ submit    OK   dry run prints payload; --confirm refuses an unready application
 
 Everything mechanical works. What remains is credentials and scoring calibration.
 
+## Scheduled-run defects found and fixed (2026-09-06)
+
+The system looked healthy — the timer ran every six hours, exited 0, and the
+journal filled with scored jobs — while two of its three stages were broken. Both
+failures were silent in the sense that mattered: `systemctl status` showed
+`SUCCESS` either way.
+
+### Greenhouse discovery had produced nothing for nine days
+
+`JOBCLAW_GREENHOUSE_BOARDS` contained `phonepe`, which is not a Greenhouse board
+at all: both `/v1/boards/phonepe` and `/v1/boards/phonepe/jobs` return 404.
+`MultiBoardClient.Discover` returned `nil, err` on the first board that failed, so
+one dead token discarded the jobs already collected from the eleven healthy boards
+and reported `Fetched: 0`. The newest Greenhouse row in the database was dated
+Aug 28.
+
+The consequence was a quality collapse rather than an outage. JobSpy kept working,
+so the queue still filled — with Wipro `DEVELOPER L3`, mainframe and ASP.NET roles
+— while the curated employer boards that justify the whole Greenhouse path
+contributed nothing.
+
+Three changes:
+
+- `MultiBoardClient.Discover` now attempts every board, returns partial results
+  alongside `errors.Join` of the per-board failures, and names the board in each
+  error. `greenhouse board returned HTTP 404` is not actionable across a dozen
+  boards. It still stops early if `ctx` is done, so a cancelled run does not
+  report twelve identical deadline errors.
+- `discovery.Service` used to `return` before `Upsert` whenever `Discover`
+  errored, which threw away partial results. It now stores what arrived and
+  *then* reports the error. A source may legitimately return jobs and an error
+  together.
+- `Result.Partial()` plus a `PARTIAL` status in `runDiscover`, because
+  `Status: FAILED` printed next to `Stored: 114` reads as a contradiction.
+
+Note the isolation the product promises is per-`Source`, and all boards sit behind
+one `Source`. Service-level isolation could never have caught this; it had to be
+fixed inside the composite. Regression tests are in
+`internal/discovery/greenhouse/multi_board_test.go` and put the failing board
+first, so a return to fail-fast is caught.
+
+Verified: `Fetched: 114, Stored: 114, Status: OK`, with fresh rows from GitLab,
+Zscaler, Twilio, Stripe and Airbnb.
+
+### Every scheduled sheet sync failed on the gog keyring
+
+`jobclaw-discover.service` sets `ProtectHome=read-only` and listed only
+`ReadWritePaths=/home/openclaw/jobclaw`. `gog` keeps its OAuth refresh token in a
+file-backed keyring at `/home/openclaw/.local/share/gogcli/keyring` and opens a
+`.lock` file to read it, so every sync from the timer died with
+`open ... /keyring/.lock: read-only file system`.
+
+What made this expensive to find: **a manual run works**, because an interactive
+shell has a writable home. The failure existed only under systemd. The wrapper
+also treats sheet sync as best-effort, so the run still exited 0. The only
+evidence was in `journalctl`, and only on runs that actually had rows to append —
+a run with zero new rows never called `gog` and looked clean.
+
+Fixed by adding the three `gogcli` directories to `ReadWritePaths`. Note gog needs
+*write* access there, not just read: it rewrites the stored token on every access
+token refresh. Verified with a real timer-triggered run: `New rows: 2`,
+`Appended 2 row(s).`, no keyring error, no duplicate rows in the sheet.
+
+### The timer never ran on the schedule it documented
+
+The unit carried `OnCalendarTimezone=Asia/Kolkata`, which is not a systemd
+directive. It was silently ignored and the timer ran on UTC, firing at
+05:30/11:30/17:30/23:30 IST instead of the documented 00/06/12/18. Per-timer
+timezones need systemd 252; the host runs 249. Now expressed as
+`OnCalendar=*-*-* 00,06,12,18:30:00` in UTC, which lands on the intended IST
+times. `systemd-analyze verify` flags unknown keys and is worth running after any
+unit edit.
+
+### Checked and deliberately left alone
+
+- `runScore` calls `jobRepo.List(ctx, 1000)` with a hardcoded cap while the table
+  holds 1040 rows. `List` orders by `discovered_at DESC`, so the newest jobs are
+  always scored and the overflow is old and already scored. Not a starvation risk,
+  but the cap will need revisiting as the table grows.
+- 60 jobs sit at status `SHORTLISTED` with a latest score of `SKIP`, so they never
+  reach the sheet: `ListUnsyncedForSheet` filters on the score, while status only
+  ever advances. Stale state from a threshold change, not a live defect.
+
 ## Roadmap position
 
 Phases 1–3 (foundation, discovery, application preparation) are largely complete. Phase 4, the

@@ -5,8 +5,16 @@ Documentation=https://github.com/ArkoOf22/jobclaw
 [Timer]
 # Every six hours. Job boards do not turn over fast enough to justify more, and
 # scraping them harder invites rate limiting and IP blocks.
-OnCalendar=*-*-* 00,06,12,18:00:00
-OnCalendarTimezone=Asia/Kolkata
+#
+# Expressed in UTC, which is the host's timezone, but chosen to land on 00:00,
+# 06:00, 12:00 and 18:00 IST — the candidate's local day. IST is UTC+5:30, hence
+# the :30.
+#
+# This previously carried `OnCalendarTimezone=Asia/Kolkata`, which is not a
+# systemd directive at all. It was silently ignored, so the timer ran on UTC and
+# fired at 05:30/11:30/17:30/23:30 IST rather than the documented times. Naming a
+# timezone inside OnCalendar needs systemd 252; this host runs 249.
+OnCalendar=*-*-* 00,06,12,18:30:00
 
 # Spread the start so requests do not land on the hour alongside every other
 # scraper.
