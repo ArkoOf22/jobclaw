@@ -193,3 +193,9 @@ func (c *Client) fetchBoardName(
 func (c *Client) Name() string {
 	return "greenhouse"
 }
+
+// BoardToken reports which board this client reads, so a multi-board caller can
+// attribute a failure to a specific employer.
+func (c *Client) BoardToken() string {
+	return c.boardToken
+}

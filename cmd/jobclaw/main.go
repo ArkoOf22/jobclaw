@@ -547,10 +547,19 @@ func runDiscover(
 			result.Duration.Round(time.Millisecond),
 		)
 
-		if result.Failed {
+		switch {
+		case result.Partial():
+			// Distinguish "some of this source is broken" from "this source
+			// produced nothing". A flat FAILED next to a non-zero Stored count
+			// reads as a contradiction and invites the wrong conclusion.
+			fmt.Println("Status: PARTIAL")
+			fmt.Println("Error:", result.Error)
+
+		case result.Failed:
 			fmt.Println("Status: FAILED")
 			fmt.Println("Error:", result.Error)
-		} else {
+
+		default:
 			fmt.Println("Status: OK")
 		}
 

@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -30,6 +31,15 @@ type Result struct {
 	Duration time.Duration
 }
 
+// Partial reports a source that returned usable jobs and an error together.
+//
+// A composite source such as Greenhouse reads several boards, and one board
+// failing says nothing about the rest. Collapsing that into a plain failure hid
+// the fact that results were still available.
+func (r Result) Partial() bool {
+	return r.Failed && r.Stored > 0
+}
+
 func (s *Service) Discover(
 	ctx context.Context,
 	request Request,
@@ -53,20 +63,27 @@ func (s *Service) Discover(
 				Duration: time.Since(start),
 			}
 
+			// A source may return jobs *and* an error, when it aggregates
+			// several upstreams and only some of them failed. Storing whatever
+			// arrived before reporting the error keeps a partial failure from
+			// throwing away work that succeeded, while still surfacing the
+			// failure. Returning early here used to discard every job collected
+			// from the healthy upstreams.
 			if err != nil {
 				result.Failed = true
 				result.Error = err
-				result.Duration = time.Since(start)
-				results[index] = result
-				return
 			}
 
 			result.Fetched = len(jobs)
 
 			for _, candidate := range jobs {
-				if err := s.repository.Upsert(ctx, candidate); err != nil {
+				if storeErr := s.repository.Upsert(ctx, candidate); storeErr != nil {
 					result.Failed = true
-					result.Error = fmt.Errorf("store job: %w", err)
+					result.Error = errors.Join(
+						result.Error,
+						fmt.Errorf("store job: %w", storeErr),
+					)
+
 					break
 				}
 
