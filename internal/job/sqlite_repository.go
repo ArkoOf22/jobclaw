@@ -233,6 +233,25 @@ func (r *SQLiteRepository) GetBySourceExternalID(
 	return &j, nil
 }
 
+// Count reports how many jobs are stored.
+//
+// Needed because List requires an explicit limit and silently substitutes 100
+// for a non-positive one, so a caller that genuinely wants every row has to ask
+// how many there are. Scoring is that caller: a hardcoded cap left the oldest
+// jobs holding scores produced by rules that have since changed.
+func (r *SQLiteRepository) Count(ctx context.Context) (int, error) {
+	var count int
+
+	if err := r.db.QueryRowContext(
+		ctx,
+		`SELECT COUNT(*) FROM jobs`,
+	).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count jobs: %w", err)
+	}
+
+	return count, nil
+}
+
 func (r *SQLiteRepository) List(
 	ctx context.Context,
 	limit int,

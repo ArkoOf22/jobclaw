@@ -6,66 +6,6 @@ import (
 	"jobclaw/internal/config"
 )
 
-func TestExtractMinimumYears(t *testing.T) {
-	tests := []struct {
-		name string
-		text string
-		want float64
-		ok   bool
-	}{
-		{
-			name: "plain years",
-			text: "2 years experience",
-			want: 2,
-			ok:   true,
-		},
-		{
-			name: "plus years",
-			text: "2+ years experience",
-			want: 2,
-			ok:   true,
-		},
-		{
-			name: "minimum years",
-			text: "minimum 3 years of experience",
-			want: 3,
-			ok:   true,
-		},
-		{
-			name: "range",
-			text: "2-4 years experience",
-			want: 2,
-			ok:   true,
-		},
-		{
-			name: "unicode range",
-			text: "2–4 years experience",
-			want: 2,
-			ok:   true,
-		},
-		{
-			name: "no experience requirement",
-			text: "Build scalable backend services using Go and Kafka.",
-			want: 0,
-			ok:   false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, ok := extractMinimumYears(tt.text)
-
-			if ok != tt.ok {
-				t.Fatalf("found = %v, want %v", ok, tt.ok)
-			}
-
-			if got != tt.want {
-				t.Fatalf("years = %.1f, want %.1f", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestScoreCandidateSkills(t *testing.T) {
 	match := CandidateMatch{
 		MatchedSkills:  0,
@@ -113,19 +53,13 @@ func TestScoreCandidateDomain(t *testing.T) {
 }
 
 func TestScoreExperienceMissingRequirementIsFullScore(t *testing.T) {
-	if got := scoreExperience(
-		"Build scalable backend systems with Go and Kafka",
-		2,
-	); got != 15 {
+	if got := scoreExperience(0, false, 2); got != 15 {
 		t.Fatalf("score = %.1f, want 15.0", got)
 	}
 }
 
 func TestScoreExperienceThreeYearsForTwoYearCandidate(t *testing.T) {
-	if got := scoreExperience(
-		"3+ years of backend engineering experience",
-		2,
-	); got != 10 {
+	if got := scoreExperience(3, true, 2); got != 10 {
 		t.Fatalf("score = %.1f, want 10.0", got)
 	}
 }

@@ -442,13 +442,93 @@ unit edit.
 
 ### Checked and deliberately left alone
 
-- `runScore` calls `jobRepo.List(ctx, 1000)` with a hardcoded cap while the table
-  holds 1040 rows. `List` orders by `discovered_at DESC`, so the newest jobs are
-  always scored and the overflow is old and already scored. Not a starvation risk,
-  but the cap will need revisiting as the table grows.
 - 60 jobs sit at status `SHORTLISTED` with a latest score of `SKIP`, so they never
   reach the sheet: `ListUnsyncedForSheet` filters on the score, while status only
-  ever advances. Stale state from a threshold change, not a live defect.
+  ever advances. Stale state from a threshold change, not a live defect. As of the
+  experience-filter fix below this is 66.
+
+## The experience filter never worked (2026-09-09)
+
+Postings demanding four, five, and eight years were reaching the shortlist. Three
+independent defects, each sufficient on its own, and the middle one hid the others.
+
+**Scoring read escaped HTML.** Descriptions are stored exactly as the source
+returned them, and Greenhouse returns HTML that is itself escaped. `internal/scoring`
+never normalised it, so every word-oriented rule saw markup welded to the word
+beside it: `&lt;li&gt;8+` instead of `8+`, and `&lt;strong&gt;Go&lt;/strong&gt;`
+which `containsTerm` cannot equal to `go`. The old `extractMinimumYears` required
+the whitespace-delimited token before `years` to parse as a number, so it found
+nothing on any Greenhouse posting. Stripe job 701 asks for "8+ years of
+experience", scored `experience=15.0` — full marks — and shortlisted at 77.3.
+
+`NormalizeJobDescription` already existed but lived in `internal/application`,
+reachable only from the LLM prompt path. Moved to `job.NormalizeDescription`;
+the application-package function now delegates. `Scorer.Score` normalises once and
+every rule reads the same plain text.
+
+**The veto allowed a two-year stretch.** `experienceStretchYears = 2.0` was
+hardcoded, so with a two-year candidate the veto fired only above four years and
+every "3-4 years" and "4-5 years" posting passed by design. Now
+`job_preferences.experience.max_required_years` in `config/preferences.yaml`, set
+to 2. Unset falls back to the candidate's `total_years`, so an absent key tightens
+the filter rather than disabling it.
+
+**Extraction was too narrow and stopped too early.** Only the literal word
+"year" was matched, so `_4+Yrs_` in a Naukri title read as no requirement; and only
+the first mention anywhere was read. `internal/scoring/experience.go` replaces it:
+regex over `years|yrs|year(s)`, ranges on `-`, en/em dash and `to`, underscores
+flattened first because Go's `\b` does not fire between `s` and `_`.
+
+Semantics worth not re-litigating:
+
+- **A range counts by its low end.** "2-4 years" is genuinely open to a two-year
+  candidate and survives. This is why 12 visible jobs record `required_years=2.0`.
+- **Across several mentions the highest wins.** A posting listing "3-5 years
+  backend" and "8+ years distributed systems" requires both.
+- **A figure in the description needs requirement language within ~60 bytes before
+  or ~80 after** (`experienceContextTerms`). Amazon job 2135's "Our 3 year vision
+  is to be best-in-class" is prose, and vetoing on it would hide a real job. Years
+  in a *title* bypass the check — a title naming years is naming the requirement.
+- **Schooling is excluded on a much tighter 25-byte window.** "15 years full time
+  education" is standard in Indian JDs. The first attempt shared the 80-byte
+  window, and "Educational Qualification" on the following line then suppressed the
+  genuine "Minimum 5 Year(s) Of Experience" above it, keeping ten Accenture
+  postings visible. Schooling language always sits against its own figure.
+
+`required_years` and `ceiling_years` are now in the stored `reasoning`, with
+`none` distinguished from `0.0`, so a decision can be audited without re-parsing.
+
+**The re-score could not reach the affected jobs.** `runScore` capped at
+`List(ctx, 1000)` ordered by `discovered_at DESC`, and 7 of the 11 postings to be
+vetoed were older than that. The note above justified the cap on the grounds that
+overflow is "already scored", which only holds while the rules do not change.
+Added `SQLiteRepository.Count`; `runScore` and `status` both size their `List` from
+it. `status` was misreporting `Jobs (1000)` against 1347 stored while `tech.md`
+points at it for real totals. `runScore`'s timeout went to 30 minutes: a deadline
+mid-run leaves the table half old-rules and half new.
+
+Measured on the live database, 1347 jobs, backed up first to
+`data/backups/jobclaw.db.pre-experience-filter-20260909-170754`:
+
+```
+visible before   144 SHORTLIST/APPLY
+visible after    140 SHORTLIST, 1207 SKIP
+newly excluded    11  needs 3,3,3,3,4,4,4,4,5,8 years
+newly included     7  previously suppressed by markup-degraded skill matching
+```
+
+Of the 140 visible, none states a requirement above two years: 111 state nothing,
+12 state 2, 16 state 1, 1 states 0. The single posting still containing a ">2 years"
+string anywhere is job 2135's "3 year vision".
+
+Left open: 10 of the 11 newly-excluded jobs are already appended to the Google
+Sheet and still read `SHORTLIST` there, because `sheet_synced_at` is set and status
+only advances. `jobclaw mark <id> skipped` retires a row properly. Job 7 is
+`APPLIED` and should stay.
+
+Also note the excluded-role list is still load-bearing and not redundant with this:
+the veto fires only on a printed figure, and "Senior"/"Staff"/"Principal" titles
+frequently state none.
 
 ## Roadmap position
 

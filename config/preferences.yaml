@@ -55,8 +55,9 @@ job_preferences:
       - "Co-op"
       # Seniority well above two years of experience. "Senior", "Sr", and "Lead"
       # are here because those titles almost always want 4+ years, and many state
-      # no explicit year count in the body, so the experience veto alone would
-      # miss them. Relax these lines if you want to see senior roles again.
+      # no explicit year count in the body, so the experience veto cannot see
+      # them: it fires only on a figure the posting actually prints. Relax these
+      # lines if you want to see senior roles again.
       - "Senior"
       - "Sr"
       - "Lead"
@@ -145,6 +146,21 @@ job_preferences:
       - "Docker"
       - "Prometheus"
       - "Grafana"
+
+  experience:
+    # The highest stated experience requirement a posting may ask for and still
+    # be shown. Anything above this is vetoed outright, whatever it scores.
+    #
+    # Set to the candidate's actual 2 years, deliberately with no stretch. The
+    # previous behaviour allowed two years above, which admitted every "3-4
+    # years" and "4-5 years" posting; combined with a parser that could not read
+    # escaped HTML at all, roles asking for 8+ years were reaching the shortlist
+    # with full marks on experience.
+    #
+    # A range counts by its low end, so "2-4 years" still qualifies: that
+    # posting is genuinely open to a two-year candidate. Raise this to 3 or 4 to
+    # widen; leaving it unset falls back to the candidate's total_years.
+    max_required_years: 2
 
   job_quality:
     # Lowered from 70 → 65 → 60: a fresh-start 24h sweep produced only 4 matches at 65,

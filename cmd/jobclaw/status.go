@@ -83,12 +83,22 @@ func runStatus(
 	scoreRepo := scoring.NewRepository(db)
 	applicationRepo := application.NewSQLiteRepository(db)
 
-	jobs, err := jobRepo.List(ctx, 1000)
+	// status is documented as the place to get real totals, in contrast to
+	// `jobs list` showing only the first 20. A hardcoded 1000 quietly broke that
+	// promise once the table passed 1000 rows: it reported "Jobs (1000)" against
+	// 1347 stored, and the missing rows were the oldest, which are exactly the
+	// ones whose scores are most likely to be stale.
+	total, err := jobRepo.Count(ctx)
+	if err != nil {
+		log.Fatalf("count jobs: %v", err)
+	}
+
+	jobs, err := jobRepo.List(ctx, total)
 	if err != nil {
 		log.Fatalf("list jobs: %v", err)
 	}
 
-	scores, err := scoreRepo.List(ctx, 1000)
+	scores, err := scoreRepo.List(ctx, total)
 	if err != nil {
 		log.Fatalf("list scores: %v", err)
 	}

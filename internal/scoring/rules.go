@@ -1,7 +1,6 @@
 package scoring
 
 import (
-	"strconv"
 	"strings"
 
 	"jobclaw/internal/company"
@@ -53,19 +52,25 @@ func scoreRole(title string, roles config.Roles) float64 {
 	return 3
 }
 
-func scoreExperience(text string, candidateYears float64) float64 {
-	requiredMin, found := extractMinimumYears(text)
-
+// scoreExperience grades the gap between what the posting asks for and what the
+// candidate has. requiredYears/found come from extractRequiredYears, so the
+// score and the veto are always reading the same figure rather than parsing the
+// text twice.
+func scoreExperience(
+	requiredYears float64,
+	found bool,
+	candidateYears float64,
+) float64 {
 	if !found {
 		return 15
 	}
 
 	switch {
-	case requiredMin <= candidateYears:
+	case requiredYears <= candidateYears:
 		return 15
-	case requiredMin <= candidateYears+1:
+	case requiredYears <= candidateYears+1:
 		return 10
-	case requiredMin <= candidateYears+2:
+	case requiredYears <= candidateYears+2:
 		return 5
 	default:
 		return 0
@@ -207,27 +212,6 @@ func containsAny(text string, terms []string) bool {
 	return false
 }
 
-// experienceStretchYears is how far above their own experience a candidate is
-// assumed willing to reach. A two-year engineer is a realistic applicant for a
-// "3-4 years" posting but not a "5+ years" one, so the veto fires above this.
-const experienceStretchYears = 2.0
-
-// exceedsCandidateExperience reports whether the posting explicitly demands
-// substantially more experience than the candidate has.
-//
-// It fires only on an explicit figure in the text. A posting that states no
-// requirement is deliberately not vetoed here: seniority implied by a title with
-// no stated years is caught by the excluded-role list instead. Splitting the two
-// keeps each rule simple and its reason legible.
-func exceedsCandidateExperience(text string, candidateYears float64) bool {
-	requiredMin, found := extractMinimumYears(text)
-	if !found {
-		return false
-	}
-
-	return requiredMin > candidateYears+experienceStretchYears
-}
-
 // indiaLocationTokens are the words that positively identify a role as being in
 // India (or India-remote). Matched as whole words, so "ind" hits "Bangalore,
 // IND" without also claiming "Indiana".
@@ -284,39 +268,4 @@ func isOutsidePreferredCountry(location string) bool {
 	}
 
 	return containsAny(location, foreignLocationTokens)
-}
-
-func extractMinimumYears(text string) (float64, bool) {
-	words := strings.Fields(text)
-
-	for i := range words {
-		if i+1 >= len(words) {
-			continue
-		}
-
-		if !strings.Contains(strings.ToLower(words[i+1]), "year") {
-			continue
-		}
-
-		value := strings.Trim(
-			words[i],
-			"()[]{}:;,",
-		)
-
-		value = strings.TrimSuffix(value, "+")
-		value = strings.ReplaceAll(value, "–", "-")
-
-		if idx := strings.Index(value, "-"); idx >= 0 {
-			value = value[:idx]
-		}
-
-		n, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			continue
-		}
-
-		return n, true
-	}
-
-	return 0, false
 }

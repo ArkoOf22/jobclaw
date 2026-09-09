@@ -54,10 +54,23 @@ func (s *Scorer) Score(
 	j job.Job,
 	c company.Company,
 ) Result {
+	// Descriptions are stored as the source returned them, and Greenhouse
+	// returns HTML that is itself HTML-escaped. Every text rule below is word
+	// oriented, and an escaped tag welds itself to the word beside it: the
+	// stored form of "8+ years" is "&lt;li&gt;8+ years", and "Go" inside
+	// "&lt;strong&gt;Go&lt;/strong&gt;" is not the word "go".
+	//
+	// Scoring used to read that raw. The visible consequence was postings
+	// demanding eight years scoring full marks on experience and reaching the
+	// shortlist, because no figure could be parsed at all; skill and domain
+	// matching were quietly degraded the same way. Normalise once, here, so
+	// every rule reads the same plain text.
+	description := job.NormalizeDescription(j.Description)
+
 	text := strings.ToLower(
 		strings.Join([]string{
 			j.Title,
-			j.Description,
+			description,
 		}, " "),
 	)
 
@@ -80,8 +93,14 @@ func (s *Scorer) Score(
 		s.preferences.Roles,
 	)
 
+	requiredYears, requiredYearsFound := extractRequiredYears(
+		j.Title,
+		description,
+	)
+
 	experience := scoreExperience(
-		text,
+		requiredYears,
+		requiredYearsFound,
 		s.candidate.Experience.TotalYears,
 	)
 
@@ -202,7 +221,14 @@ func (s *Scorer) Score(
 	// is the wrong job. Scoring it low is not enough: a strong stack-and-domain
 	// fit still clears the threshold on the other components, which is how "5+
 	// years" roles reached the shortlist. Veto it outright.
-	if exceedsCandidateExperience(text, s.candidate.Experience.TotalYears) {
+	//
+	// The ceiling is the highest stated requirement that is still acceptable, so
+	// a posting asking for exactly the candidate's years survives and anything
+	// above it does not. It comes from preferences rather than being derived
+	// from the candidate's years plus a hardcoded stretch: the previous
+	// two-year stretch silently admitted every "3-4 years" posting, and there
+	// was no way to say otherwise without editing Go.
+	if requiredYearsFound && requiredYears > s.experienceCeiling() {
 		recommendation = RecommendationSkip
 	}
 
@@ -227,7 +253,7 @@ func (s *Scorer) Score(
 		CompensationScore:    compensation,
 		Recommendation:       recommendation,
 		Reasoning: fmt.Sprintf(
-			"skills=%.1f candidate_skills=%.1f role=%.1f experience=%.1f domain=%.1f candidate_domain=%.1f location=%.1f company=%.1f compensation=%.1f candidate_skills_match=%d/%d candidate_domain_match=%d/%d excluded=[%s] normalized_over=%.1f",
+			"skills=%.1f candidate_skills=%.1f role=%.1f experience=%.1f domain=%.1f candidate_domain=%.1f location=%.1f company=%.1f compensation=%.1f candidate_skills_match=%d/%d candidate_domain_match=%d/%d excluded=[%s] normalized_over=%.1f required_years=%s ceiling_years=%.1f",
 			skills,
 			candidateSkills,
 			role,
@@ -243,8 +269,35 @@ func (s *Scorer) Score(
 			candidateMatch.RequiredDomains,
 			strings.Join(excluded, ","),
 			maxRawScore,
+			formatRequiredYears(requiredYears, requiredYearsFound),
+			s.experienceCeiling(),
 		),
 	}
+}
+
+// experienceCeiling is the highest stated experience requirement a posting may
+// carry and still be considered.
+//
+// Falls back to the candidate's own years when preferences do not set one, so an
+// absent config key tightens the filter rather than disabling it. A filter that
+// silently turns itself off is the failure mode worth designing against here.
+func (s *Scorer) experienceCeiling() float64 {
+	if ceiling := s.preferences.ExperienceRequired.MaxRequiredYears; ceiling > 0 {
+		return ceiling
+	}
+
+	return s.candidate.Experience.TotalYears
+}
+
+// formatRequiredYears keeps "the posting stated nothing" distinguishable from
+// "the posting stated zero" in the stored reasoning. Both are legitimate, and
+// only one of them is ever vetoed.
+func formatRequiredYears(years float64, found bool) string {
+	if !found {
+		return "none"
+	}
+
+	return fmt.Sprintf("%.1f", years)
 }
 
 // Component maximums. These must stay in sync with the corresponding score

@@ -1604,7 +1604,11 @@ func runScore(
 	cfg *config.Config,
 	db *database.DB,
 ) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	// Generous, because this now covers the whole table rather than a window of
+	// 1000, and each job may trigger an on-demand company classification. A
+	// deadline hit mid-run leaves the table half re-scored under old rules and
+	// half under new, which is worse than a slow run.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
 	jobRepo := job.NewSQLiteRepository(db)
@@ -1635,7 +1639,20 @@ func runScore(
 		scorer,
 	).WithCompanyClassifier(companyService)
 
-	jobs, err := jobRepo.List(ctx, 1000)
+	// Score every job, not a fixed newest-N window.
+	//
+	// The cap used to be 1000 against a growing table, justified by the newest
+	// jobs always being covered and the overflow being "old and already
+	// scored". That reasoning only holds while the rules do not change. When the
+	// experience filter was corrected, 7 of the 11 postings it should have
+	// vetoed sat outside the window and kept their old SHORTLIST, so the fix
+	// could not reach the jobs the candidate was actually looking at.
+	total, err := jobRepo.Count(ctx)
+	if err != nil {
+		log.Fatalf("count jobs: %v", err)
+	}
+
+	jobs, err := jobRepo.List(ctx, total)
 	if err != nil {
 		log.Fatalf("list jobs: %v", err)
 	}

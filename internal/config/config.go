@@ -73,6 +73,7 @@ type JobPreferences struct {
 	Compensation          Compensation          `yaml:"compensation"`
 	Domains               Domains               `yaml:"domains"`
 	TechnologyPreferences TechnologyPreferences `yaml:"technology_preferences"`
+	ExperienceRequired    ExperienceRequired    `yaml:"experience"`
 	JobQuality            JobQuality            `yaml:"job_quality"`
 	ApplicationPolicy     ApplicationPolicy     `yaml:"application_policy"`
 	Exclusions            Exclusions            `yaml:"exclusions"`
@@ -114,6 +115,19 @@ type Domains struct {
 type TechnologyPreferences struct {
 	StronglyPreferred []string `yaml:"strongly_preferred"`
 	Preferred         []string `yaml:"preferred"`
+}
+
+// ExperienceRequired bounds how much experience a posting may demand.
+//
+// This is a hard filter rather than a scoring weight. Years demanded is the one
+// requirement a candidate cannot narrow the gap on by being a strong match
+// elsewhere, and treating it as a score let "8+ years" roles reach the shortlist
+// on the strength of their stack.
+type ExperienceRequired struct {
+	// MaxRequiredYears is the highest stated requirement a posting may carry and
+	// still be considered. Zero falls back to the candidate's own total years,
+	// so the filter is never accidentally disabled by an absent config key.
+	MaxRequiredYears float64 `yaml:"max_required_years"`
 }
 
 type JobQuality struct {
