@@ -1,0 +1,59 @@
+[Unit]
+# Long-running /metrics endpoint for JobClaw pipeline health, scraped locally by
+# Grafana Alloy and pushed out to Grafana Cloud. Unlike jobclaw-discover this is
+# a persistent service, not a timer-driven oneshot.
+Description=JobClaw Prometheus metrics endpoint
+Documentation=https://github.com/ArkoOf22/jobclaw
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=openclaw
+Group=openclaw
+WorkingDirectory=/home/openclaw/jobclaw
+
+# Optional: picks up JOBCLAW_DB_PATH and JOBCLAW_METRICS_ADDR if they are set.
+# The leading `-` means a missing file is not an error, since the defaults
+# (data/jobclaw.db and 127.0.0.1:9090) are correct for this host.
+EnvironmentFile=-/home/openclaw/jobclaw/.env
+
+# Bound to loopback deliberately. The endpoint has NO authentication, and
+# although nothing in the metrics is secret, it must not face the public
+# internet. Alloy scrapes it from the same host, so loopback is sufficient.
+# Override with JOBCLAW_METRICS_ADDR only for a Tailscale address, never 0.0.0.0.
+ExecStart=/home/openclaw/jobclaw/bin/jobclaw metrics --addr 127.0.0.1:9090
+
+# A scrape endpoint that is down is worse than useless: the dashboard shows a
+# gap that looks like a pipeline problem rather than a monitoring problem.
+Restart=always
+RestartSec=5s
+
+# This host is a 2GB t3.small that has already taken OOM kills, so the
+# monitoring must never be what tips it over. The server is a small stdlib HTTP
+# handler plus a pure-Go SQLite reader; these bounds are generous for that and
+# still make the service the first thing the kernel reclaims from.
+MemoryHigh=96M
+MemoryMax=192M
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+# SQLite needs to create -wal and -shm sidecar files alongside the database even
+# for read-only queries, so the data directory has to be writable. Nothing else
+# under the project does.
+ReadWritePaths=/home/openclaw/jobclaw/data
+
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+# No outbound connections are needed: Alloy comes to us.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
