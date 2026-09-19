@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"time"
 
 	"jobclaw/internal/application"
@@ -29,7 +30,23 @@ type StatusReport struct {
 
 	// AwaitingApproval is what a human needs to decide on: scored or
 	// shortlisted jobs that have not been approved or rejected.
+	//
+	// This is the highest-scoring slice, not the whole backlog. Ordered by
+	// score descending and capped at defaultAwaitingApprovalLimit, overridable
+	// with --limit. AwaitingApprovalTotal carries the real count.
+	//
+	// It used to return every row. With 2,150 pending jobs that made this
+	// document 597KB, or roughly 149,000 tokens, and an agent that runs
+	// `status --json` swallows all of it on every call. That single field was
+	// the largest cost in the whole system and produced observed requests of
+	// over 500,000 prompt tokens. A human cannot act on 2,150 rows anyway, so
+	// the full list was expensive and useless at the same time.
 	AwaitingApproval []JobSummary `json:"awaiting_approval"`
+
+	// AwaitingApprovalTotal is how many jobs actually await a decision,
+	// regardless of how many are listed above. Always the true count, so a
+	// caller can tell a capped list from a short one.
+	AwaitingApprovalTotal int `json:"awaiting_approval_total"`
 
 	// NeedsAttention is work already approved that cannot progress on its own.
 	NeedsAttention []AttentionItem `json:"needs_attention"`
@@ -68,9 +85,17 @@ type AttentionItem struct {
 	NextCommand   string `json:"next_command"`
 }
 
+// defaultAwaitingApprovalLimit caps how many pending jobs `status` lists.
+//
+// Chosen to be more than a person will work through in one sitting and small
+// enough that an agent reading this output pays almost nothing for it. Pass
+// --limit 0 for the full backlog when something genuinely needs every row.
+const defaultAwaitingApprovalLimit = 25
+
 func runStatus(
 	databasePath string,
 	asJSON bool,
+	limit int,
 	db *database.DB,
 ) {
 	ctx, cancel := context.WithTimeout(
@@ -169,6 +194,31 @@ func runStatus(
 		report.AwaitingApproval = append(report.AwaitingApproval, summary)
 	}
 
+	// The true count, recorded before the list is trimmed.
+	report.AwaitingApprovalTotal = len(report.AwaitingApproval)
+
+	// Highest score first, so a cap keeps the jobs worth deciding on rather
+	// than whichever happened to be discovered first. Unscored entries sort
+	// last: they cannot be judged yet, so they are the least useful to show.
+	sort.SliceStable(report.AwaitingApproval, func(i, j int) bool {
+		left, right := report.AwaitingApproval[i], report.AwaitingApproval[j]
+
+		switch {
+		case left.Score == nil && right.Score == nil:
+			return false
+		case left.Score == nil:
+			return false
+		case right.Score == nil:
+			return true
+		default:
+			return *left.Score > *right.Score
+		}
+	})
+
+	if limit > 0 && len(report.AwaitingApproval) > limit {
+		report.AwaitingApproval = report.AwaitingApproval[:limit]
+	}
+
 	for _, app := range applications {
 		report.Applications.ByStatus[string(app.Status)]++
 
@@ -256,7 +306,21 @@ func printStatusReport(report StatusReport) {
 	}
 
 	fmt.Println()
-	fmt.Printf("Awaiting your approval (%d)\n", len(report.AwaitingApproval))
+
+	// Say when the list is a slice rather than the whole thing, otherwise the
+	// header count and the number of rows disagree for no visible reason.
+	if report.AwaitingApprovalTotal > len(report.AwaitingApproval) {
+		fmt.Printf(
+			"Awaiting your approval (%d, showing top %d by score)\n",
+			report.AwaitingApprovalTotal,
+			len(report.AwaitingApproval),
+		)
+	} else {
+		fmt.Printf(
+			"Awaiting your approval (%d)\n",
+			report.AwaitingApprovalTotal,
+		)
+	}
 
 	for _, summary := range report.AwaitingApproval {
 		score := "unscored"

@@ -82,18 +82,39 @@ func main() {
 			// Machine-readable pipeline state, so an orchestrator can drive
 			// JobClaw without parsing the human-facing output.
 			asJSON := false
+			limit := defaultAwaitingApprovalLimit
 
-			if len(os.Args) == 3 {
-				if os.Args[2] != "--json" {
-					log.Fatal("usage: jobclaw status [--json]")
+			statusArgs := os.Args[2:]
+			for len(statusArgs) > 0 {
+				switch statusArgs[0] {
+				case "--json":
+					asJSON = true
+					statusArgs = statusArgs[1:]
+
+				case "--limit":
+					if len(statusArgs) < 2 {
+						log.Fatal("--limit requires a number (0 for no cap)")
+					}
+
+					parsed, err := strconv.Atoi(statusArgs[1])
+					if err != nil || parsed < 0 {
+						log.Fatalf(
+							"--limit needs a non-negative number, got %q",
+							statusArgs[1],
+						)
+					}
+
+					limit = parsed
+					statusArgs = statusArgs[2:]
+
+				default:
+					log.Fatal(
+						"usage: jobclaw status [--json] [--limit N]",
+					)
 				}
-
-				asJSON = true
-			} else if len(os.Args) > 3 {
-				log.Fatal("usage: jobclaw status [--json]")
 			}
 
-			runStatus(databasePath, asJSON, db)
+			runStatus(databasePath, asJSON, limit, db)
 			return
 
 		case "mark":

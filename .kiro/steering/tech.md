@@ -133,6 +133,18 @@ existing ones will not change meaning. It reports job counts by status and
 recommendation, application counts, the jobs awaiting a human approval decision,
 and the applications that cannot progress alone, each with the next command.
 
+**`awaiting_approval` is capped at 25, highest score first.** `awaiting_approval_total`
+carries the true count, so a capped list is distinguishable from a short one. Use
+`--limit N` to change the cap, or `--limit 0` for the full backlog.
+
+The cap exists because this field used to return every pending row. At 2,150
+pending jobs the document was 597KB, about 149,000 tokens, and the OpenClaw agent
+reads `status --json` on most turns — so this one field was the single largest
+token cost in the system and produced observed requests above 500,000 prompt
+tokens. Capping it took the default payload to under 10KB, a 61x reduction. A
+human cannot act on 2,150 rows anyway, so the full list was expensive and
+unusable at the same time.
+
 Applications with an unresolved submission attempt appear with an empty
 `next_command`, because they must never be retried automatically.
 
