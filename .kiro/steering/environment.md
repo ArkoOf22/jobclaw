@@ -15,9 +15,29 @@ it cannot build (Go 1.25.5 vs the required 1.26.5).
 | Go | 1.26.5 at `/usr/local/go` (not on root's PATH) |
 | Project path | `/home/openclaw/jobclaw` |
 | Owning user | `openclaw` |
-| Disk | 20 GB, ~45% used |
+| Disk | 20 GB, ~66% used |
+| RAM | 1.9 GB usable, plus 2 GB swap at `/swapfile` |
 
 The instance name predates the project's rename from OpenClaw to JobClaw.
+
+## Memory: 2 GB of swap, and why
+
+The box has under 2 GB of RAM and `openclaw-gateway` was OOM-killed twice
+(2026-09-06 and 2026-09-19) with no swap to fall back on. `dmesg -T | grep -i
+"killed process"` shows both. The cause is the agent's own replayed context, not
+JobClaw.
+
+A 2 GB swap file was added on 2026-09-19, persisted in `/etc/fstab`
+(`/swapfile none swap sw 0 0`, backed up as `/etc/fstab.bak-*`) with
+`vm.swappiness=10` in `/etc/sysctl.d/99-jobclaw-swappiness.conf`.
+
+Swappiness is deliberately low: swap here is an emergency cushion that turns a
+kill into slowness, not a routine tier the kernel should page into under normal
+load. `findmnt --verify --fstab` reports 0 errors; it warns that the source is a
+regular file, which is what a swap file is, so that warning is expected.
+
+This does not make the host roomy. It makes a memory spike survivable. The real
+fix is trimming what the agent replays on every poll.
 
 ## Access
 
@@ -63,6 +83,45 @@ control, and SSM already provides access.
 
   The HTTP endpoint is **unauthenticated** unless `JOBSPY_HTTP_TOKEN` is set. It is
   bound to loopback, so keep it there.
+
+  Note the JobSpy server has **two independent consumers** and they are unrelated.
+  JobClaw's own Go client (`internal/discovery/jobspy/client.go`, endpoint
+  `http://127.0.0.1:8000/mcp`) is what fills the database. The `job-search-mcp`
+  OpenClaw skill is a separate front door for ad-hoc chat searches and stores
+  nothing. JobClaw does not go through that skill, so the skill's presence or
+  absence has no effect on discovery.
+
+- **`jobclaw-metrics.service`** — `bin/jobclaw metrics` on `127.0.0.1:9090`,
+  enabled at boot, serving `/metrics` in Prometheus text format and `/healthz`.
+  Unit is version-controlled at `deploy/jobclaw-metrics.service`, capped at
+  `MemoryMax=192M`, measured resident size ~3 MB.
+
+  **Unauthenticated**, like JobSpy. Keep it on loopback or a Tailscale address;
+  never `0.0.0.0`.
+
+- **`alloy.service`** — Grafana Alloy v1.19.2, enabled at boot. Scrapes the metrics
+  endpoint (60s) and host metrics (30s), then remote-writes to Grafana Cloud in
+  `ap-south-1`. Capped at `MemoryMax=256M`, measured ~52 MB.
+
+  Config at `/etc/alloy/config.alloy` (from `deploy/alloy/config.alloy`); systemd
+  drop-in at `/etc/systemd/system/alloy.service.d/override.conf` (from
+  `deploy/alloy/alloy-override.conf`). Runs as user `alloy`.
+
+  Credentials live in `/etc/alloy/grafana-cloud.env`, root-only mode 600 and
+  **untracked**. systemd reads it as root before dropping privileges, so 600 is
+  correct despite the service running as `alloy`. The `EnvironmentFile` has no
+  leading `-` on purpose: missing credentials must fail loudly rather than start
+  and silently push nothing.
+
+  Alloy's own diagnostics are on `127.0.0.1:12345`. To confirm delivery:
+
+  ```bash
+  curl -s http://127.0.0.1:12345/metrics | grep remote_storage_samples
+  ```
+
+  `samples_failed_total` should stay at 0. Setup guide: `docs/grafana-cloud-setup.md`.
+  Because host metrics include `node_vmstat_oom_kill` and PSI memory pressure, the
+  next OOM kill is now visible as a graph rather than found later in `dmesg`.
 - **Tailscale** (`100.107.167.115`) — an alternative network path if SSM is ever unavailable.
 - `openclaw-gateway` on `127.0.0.1:18789` and `gog` on `127.0.0.1:8788` — unrelated tooling.
 
