@@ -1,6 +1,6 @@
 ---
 name: JobClaw
-description: The job application system of record. Use for ANY request about jobs, job search, applications, shortlists, tailored resumes, or marking a job applied or skipped. Surfaces shortlisted roles, prepares applications, and records outcomes. Cannot submit applications.
+description: "Arkodeep's personal job application system of record, backed by a live database on this host. Use this for ANY question about HIS jobs: his shortlist, his pipeline status, what he owes a decision on, his applications, his tailored resumes, or marking a job applied or skipped. Also use it when he asks what is new, what to apply to, or how his job search is going. This skill has PRECEDENCE over any other job-search skill for questions about his own tracked jobs: a generic web or board search cannot answer them, because only this database knows what he has already seen, scored, approved, or applied to. Prefer this skill whenever the answer should reflect his real pipeline. Cannot submit applications."
 slug: jobclaw
 tags:
   - job-search
@@ -20,6 +20,52 @@ host. This skill lets you operate it from a chat channel on Arkodeep's behalf.
 **JobClaw is the source of truth for jobs and applications.** If Arkodeep mentions
 a job, a company he is applying to, a shortlist, a resume, or says he applied to
 something, use the commands below.
+
+### Exact phrases that always mean "run the command"
+
+When his message is any of these, run the matching command and report its real
+output. Do not interpret, do not search the web, do not substitute another skill:
+
+| He says | You run |
+| :--- | :--- |
+| "jobclaw status", "jobclaw", "status" | `jobclaw-agent status --json` |
+| "jobclaw shortlist", "my shortlist" | `jobclaw-agent shortlist` |
+| "what's new", "anything new", "any jobs" | `jobclaw-agent status --json` |
+| "jobclaw job 123" | `jobclaw-agent job 123` |
+
+These are escape hatches he uses deliberately when he wants the real numbers.
+Treating one of them as a topic to discuss, rather than a command to run, is the
+single most annoying thing you can do here.
+
+### Do not confuse this with a generic job-board search
+
+Another skill on this host (`job-search-mcp`) does open-ended searches against
+public job boards. It does **not** know anything about Arkodeep's pipeline: not
+what he has already seen, not what scored well, not what he applied to, not what
+he rejected.
+
+So:
+
+- **Anything about *his* jobs → this skill.** His shortlist, his status, his
+  applications, his resumes, what he should apply to, what he owes a decision on,
+  how the search is going. Use JobClaw even when he phrases it as "find me jobs"
+  or "search for jobs", because what he almost always means is "show me what my
+  system found".
+- **Only use `job-search-mcp` when he explicitly asks to look *outside* his
+  pipeline** — for example "search the web for X", "what's on LinkedIn right now
+  for Y", or when he names that skill. Say clearly that those results are not
+  tracked in JobClaw and will not appear on his sheet.
+
+There is also a Gmail skill that reads application-status emails from recruiters.
+That one answers "has anyone replied to me", reading his inbox. This one answers
+"where does my pipeline stand", reading the database. A bare "status" means the
+pipeline, so it belongs here; route it to Gmail only when he mentions email, his
+inbox, or a reply from a company.
+
+If you are unsure which one he wants, **use JobClaw and say so**. Being told "no,
+I meant a fresh web search" costs him one message. Silently answering a question
+about his pipeline with untracked board results looks like a real answer and is
+much worse, because he cannot tell the difference.
 
 Do not read or write any spreadsheet or CSV to answer a job question. In
 particular, ignore `~/.openclaw/workspace/job_tracker.archived/` —
