@@ -1,0 +1,99 @@
+// Grafana Alloy configuration for the JobClaw host.
+//
+// Alloy scrapes locally and pushes out to Grafana Cloud. Nothing scrapes this
+// host from the internet, so no inbound port and no security group change is
+// needed -- which matters here, because inbound SSH in openclaw-sg is
+// deliberately pinned to a stale address and access is over SSM.
+//
+// Install:  /etc/alloy/config.alloy
+// Service:  alloy.service (from the Grafana apt repository)
+// Reload:   sudo systemctl reload alloy
+// Validate: sudo alloy fmt /etc/alloy/config.alloy
+//
+// Credentials are NOT in this file. They come from the environment via
+// sys.env(), populated by /etc/alloy/grafana-cloud.env, which is root-only and
+// untracked. This file is safe to commit.
+
+// ---------------------------------------------------------------------------
+// Delivery
+// ---------------------------------------------------------------------------
+
+prometheus.remote_write "grafana_cloud" {
+	endpoint {
+		url = sys.env("GRAFANA_CLOUD_PROM_URL")
+
+		basic_auth {
+			// Username is the numeric Grafana Cloud instance/stack ID, not an
+			// email address. Password is an API token with metrics push scope.
+			username = sys.env("GRAFANA_CLOUD_PROM_USER")
+			password = sys.env("GRAFANA_CLOUD_PROM_TOKEN")
+		}
+	}
+
+	// A 6-hourly pipeline does not justify holding much in memory, and this host
+	// is a 2GB t3.small that has already taken OOM kills. Keep the write-ahead
+	// buffer small so a Grafana Cloud outage cannot grow Alloy's footprint.
+	wal {
+		truncate_frequency = "30m"
+		min_keepalive_time = "5m"
+		max_keepalive_time = "1h"
+	}
+}
+
+// ---------------------------------------------------------------------------
+// JobClaw pipeline metrics
+// ---------------------------------------------------------------------------
+
+// The jobclaw-metrics.service endpoint. Loopback only, no auth, which is why
+// Alloy has to run on this host rather than scraping from outside.
+prometheus.scrape "jobclaw" {
+	targets = [{
+		__address__ = "127.0.0.1:9090",
+		// Carried through to Grafana Cloud so dashboards can distinguish this
+		// host if a second one ever appears.
+		instance = "openclaw-prod",
+		service  = "jobclaw",
+	}]
+
+	forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+
+	// These are gauges over a database that only changes when the six-hourly
+	// timer runs, so a fast scrape buys nothing. 60s keeps graphs responsive
+	// when a manual run happens without inflating the free tier's sample count.
+	scrape_interval = "60s"
+	scrape_timeout  = "10s"
+}
+
+// ---------------------------------------------------------------------------
+// Host health
+// ---------------------------------------------------------------------------
+
+// Answers the question that started this: what is the machine actually costing,
+// and is the memory pressure that killed openclaw-gateway getting worse?
+//
+// The collector set is hand-picked rather than left at the default, because the
+// default enables ~40 collectors and the Grafana Cloud free tier caps active
+// series. Notably `vmstat` carries node_vmstat_oom_kill, so an OOM kill becomes
+// a visible counter increment instead of something only found later in dmesg,
+// and `pressure` exposes PSI stall time, which rises before a kill happens.
+prometheus.exporter.unix "host" {
+	set_collectors = [
+		"cpu",        // utilisation, for right-sizing the instance
+		"meminfo",    // the headline number: how close to 2GB are we
+		"vmstat",     // includes oom_kill -- the OOM counter
+		"pressure",   // PSI: memory stall time, the early warning
+		"filesystem", // disk headroom
+		"loadavg",
+		"stat", // boot time, so a reboot is visible on the graph
+	]
+}
+
+prometheus.scrape "host" {
+	targets    = prometheus.exporter.unix.host.targets
+	forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+
+	// Host metrics are the fast-moving ones. A memory spike that precedes an
+	// OOM kill is invisible at a 5-minute interval.
+	scrape_interval = "30s"
+	scrape_timeout  = "10s"
+}
