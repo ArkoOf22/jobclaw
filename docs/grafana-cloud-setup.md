@@ -46,11 +46,33 @@ curl -s http://127.0.0.1:9090/metrics | head   # -> jobclaw_jobs_total ...
 
 The token is shown once. Treat it like a password.
 
+## Where to run the commands
+
+> **Every shell command in this document runs on the EC2 host, not on the Mac.**
+>
+> The Mac is for editing only. It has no `apt-get`, no systemd, and no database,
+> so these commands fail there with `command not found`. Get onto the host first:
+>
+> ```bash
+> ssh jobclaw          # lands as `ubuntu`; sudo works from there
+> ```
+>
+> Or run a single command without an interactive shell:
+>
+> ```bash
+> ssh jobclaw 'sudo apt-get update'
+> ```
+>
+> `ubuntu` is the login user and the only one with the SSH key. Project-owned
+> work goes through `sudo -u openclaw`. See `environment.md`.
+
 ## Step 2: install Alloy on the host
 
 Grafana Agent reached end of life in November 2025; Alloy is its replacement.
 From the [Alloy Linux install docs](https://grafana.com/docs/alloy/latest/set-up/install/linux/),
-add the Grafana apt repository and install:
+add the Grafana apt repository and install.
+
+**On the EC2 host** (`ssh jobclaw` first):
 
 ```bash
 sudo apt-get install -y gpg
@@ -63,6 +85,10 @@ echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stab
 sudo apt-get update
 sudo apt-get install -y alloy
 ```
+
+Installing does not start anything useful: the unit needs
+`/etc/alloy/grafana-cloud.env` (step 3) and fails loudly without it. So it is safe
+to install before the credentials exist.
 
 ## Step 3: install the config and credentials
 
