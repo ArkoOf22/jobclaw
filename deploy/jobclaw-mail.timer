@@ -1,0 +1,27 @@
+[Unit]
+Description=Check job-related email on a schedule
+Documentation=https://github.com/ArkoOf22/jobclaw
+
+[Timer]
+# Three times a day, during waking hours, so an interview invitation is seen
+# within about five hours without the agent running continuously.
+#
+# Expressed in UTC, which is the host's timezone, but chosen to land on 09:00,
+# 14:00 and 19:00 IST. IST is UTC+5:30, hence the :30. Do not "simplify" that
+# away -- a previous unit here carried OnCalendarTimezone=Asia/Kolkata, which is
+# not a systemd directive at all, was silently ignored, and shifted the whole
+# schedule by five and a half hours. Per-timer timezones need systemd 252 and
+# this host runs 249. Run `systemd-analyze verify` after editing.
+OnCalendar=*-*-* 03,08,13:30:00
+
+# Offset from jobclaw-discover.timer (00,06,12,18:30 UTC) so the two do not
+# contend for memory on a 2GB box.
+RandomizedDelaySec=10min
+
+# A missed window catches up after downtime rather than waiting for the next one.
+Persistent=true
+
+Unit=jobclaw-mail.service
+
+[Install]
+WantedBy=timers.target

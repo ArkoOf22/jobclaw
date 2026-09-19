@@ -1,0 +1,52 @@
+[Unit]
+# One scheduled job-mail check. Triggered by jobclaw-mail.timer.
+#
+# This exists to replace the Gmail push hook (hooks.enabled=false), which woke
+# the agent once per inbox email with a full context bundle -- around 39 model
+# calls a day, the large majority of them bank statements and newsletters.
+Description=JobClaw scheduled job-mail check
+Documentation=https://github.com/ArkoOf22/jobclaw
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=openclaw
+Group=openclaw
+WorkingDirectory=/home/openclaw/jobclaw
+
+ExecStart=/home/openclaw/jobclaw/scripts/check-job-mail.sh
+
+# One Gmail query plus at most one agent call. The agent side is the slow part
+# and already carries its own 300s timeout.
+TimeoutStartSec=10min
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+# The watermark file lives under data/.
+ReadWritePaths=/home/openclaw/jobclaw
+
+# Same gog keyring trap that silently broke sheet sync for days: gog keeps its
+# OAuth refresh token in a file-backed keyring under the home directory and takes
+# a lock file to read it, and it rewrites the token on every refresh. With
+# ProtectHome=read-only those paths are unwritable, so a scheduled run fails with
+# "read-only file system" while a manual run succeeds, because an interactive
+# shell has a writable home. That asymmetry is what makes it expensive to spot.
+ReadWritePaths=/home/openclaw/.local/share/gogcli
+ReadWritePaths=/home/openclaw/.local/state/gogcli
+ReadWritePaths=/home/openclaw/.config/gogcli
+
+# The agent call goes through the local gateway and writes session state.
+ReadWritePaths=/home/openclaw/.openclaw
+
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
