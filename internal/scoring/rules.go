@@ -7,17 +7,22 @@ import (
 	"jobclaw/internal/config"
 )
 
+// scoreSkills counts how many preferred technologies the posting mentions. It is
+// now a minor booster (max 10), deliberately demoted below candidate-skill
+// overlap: a posting mentioning many technologies is weak positive evidence, but
+// it says nothing about whether the candidate actually has them. scoreCandidate-
+// Skills carries that heavier signal.
 func scoreSkills(
 	text string,
 	preferences config.TechnologyPreferences,
 ) float64 {
-	const maxScore = 20.0
+	const maxScore = 10.0
 
 	strongMatches := countMatches(text, preferences.StronglyPreferred)
 	preferredMatches := countMatches(text, preferences.Preferred)
 
-	score := float64(strongMatches)*2.0 +
-		float64(preferredMatches)*1.0
+	score := float64(strongMatches)*1.0 +
+		float64(preferredMatches)*0.5
 
 	if score > maxScore {
 		return maxScore
@@ -26,8 +31,14 @@ func scoreSkills(
 	return score
 }
 
+// scoreCandidateSkills is the dominant skills signal (max 25): the fraction of
+// the posting's recognised required skills that the candidate actually has. This
+// is the "how well do I cover this job" measure that LinkedIn/Naukri "top
+// choices" rank on. It is only available when the posting names at least one
+// preferred skill (RequiredSkills > 0); otherwise the scorer excludes it from
+// normalization rather than scoring it zero, so a thin JD is not unfairly sunk.
 func scoreCandidateSkills(match CandidateMatch) float64 {
-	const maxScore = 10.0
+	const maxScore = 25.0
 
 	if match.RequiredSkills == 0 {
 		return 0
@@ -36,13 +47,29 @@ func scoreCandidateSkills(match CandidateMatch) float64 {
 	return maxScore * match.SkillMatchRatio()
 }
 
-func scoreRole(title string, roles config.Roles) float64 {
-	if containsAny(title, roles.Excluded) {
-		return 0
-	}
-
+// scoreRole grades how well a job title matches the roles the candidate is
+// after. titleFamily is the set of related titles seeded from the candidate's
+// target_roles (primary + secondary), and it is the key change over exact
+// list matching: LinkedIn and Naukri treat "Backend Engineer", "SDE II",
+// "Software Engineer II" and "Golang Developer" as siblings via a titles graph,
+// so a sibling title should score as a real match, not the fallback.
+//
+// Order matters. The explicit preferred/acceptable lists still win first so
+// their calibrated 15/10 stays intact; the family gives a strong 12 to sibling
+// titles that used to fall through to 3; the fallback stays 3 for genuinely
+// unrelated titles. The excluded list is NOT consulted here any more — hard
+// vetoes moved to the scorer so "Senior"/"Lead" can rank low without vanishing.
+func scoreRole(
+	title string,
+	roles config.Roles,
+	titleFamily []string,
+) float64 {
 	if containsAny(title, roles.Preferred) {
 		return 15
+	}
+
+	if matchesTitleFamily(title, titleFamily) {
+		return 12
 	}
 
 	if containsAny(title, roles.Acceptable) {
@@ -50,6 +77,50 @@ func scoreRole(title string, roles config.Roles) float64 {
 	}
 
 	return 3
+}
+
+// matchesTitleFamily reports whether the job title is a member of the
+// candidate's target-role family. A family entry matches when the whole phrase
+// appears in the title, or when every meaningful (>=3 char) token of the entry
+// appears in the title — the same permissive token logic the discovery matcher
+// uses, so "SDE II" matches "SDE-II Backend" and "Backend Engineer" matches
+// "Backend Engineer, Payments".
+func matchesTitleFamily(title string, family []string) bool {
+	title = strings.ToLower(title)
+
+	for _, entry := range family {
+		entry = strings.ToLower(strings.TrimSpace(entry))
+		if entry == "" {
+			continue
+		}
+
+		if strings.Contains(title, entry) {
+			return true
+		}
+
+		tokens := strings.Fields(entry)
+		meaningful := 0
+		allPresent := true
+
+		for _, token := range tokens {
+			if len(token) < 3 {
+				continue
+			}
+
+			meaningful++
+
+			if !strings.Contains(title, token) {
+				allPresent = false
+				break
+			}
+		}
+
+		if meaningful > 0 && allPresent {
+			return true
+		}
+	}
+
+	return false
 }
 
 // scoreExperience grades the gap between what the posting asks for and what the

@@ -89,7 +89,18 @@ type CompanyType struct {
 type Roles struct {
 	Preferred  []string `yaml:"preferred"`
 	Acceptable []string `yaml:"acceptable"`
-	Excluded   []string `yaml:"excluded"`
+
+	// Excluded titles are a hard veto: a job whose title contains any of these
+	// is forced to SKIP regardless of score. Reserve this for genuinely
+	// unreachable roles (Director, VP, Principal, Staff, Manager) and clear
+	// role mismatches (Frontend, QA, Data Analyst).
+	Excluded []string `yaml:"excluded"`
+
+	// Demoted titles are NOT vetoed. They stay visible but take a ranking
+	// penalty, so a borderline-senior role the candidate could legitimately
+	// apply to (in India "Senior"/"Sr"/"Lead" often means 3-4 years) still
+	// surfaces instead of vanishing. The penalty is applied in the scorer.
+	Demoted []string `yaml:"demoted"`
 }
 
 type Locations struct {
@@ -124,10 +135,18 @@ type TechnologyPreferences struct {
 // elsewhere, and treating it as a score let "8+ years" roles reach the shortlist
 // on the strength of their stack.
 type ExperienceRequired struct {
-	// MaxRequiredYears is the highest stated requirement a posting may carry and
-	// still be considered. Zero falls back to the candidate's own total years,
-	// so the filter is never accidentally disabled by an absent config key.
+	// MaxRequiredYears is the comfortable target: postings at or below it score
+	// full marks on experience. It is no longer the veto line — the graded
+	// experience score and this value together let a slightly-over role rank
+	// lower rather than disappear.
 	MaxRequiredYears float64 `yaml:"max_required_years"`
+
+	// HardCeilingYears is the genuine reach limit: a posting stating more than
+	// this is vetoed to SKIP, because it is a different candidate's job, not a
+	// stretch. Zero falls back to a sensible default (defaultExperienceHardCeiling
+	// in the scorer) so the veto is never accidentally disabled, but it stays
+	// well above MaxRequiredYears so "3-5 years" roles remain visible.
+	HardCeilingYears float64 `yaml:"hard_ceiling_years"`
 }
 
 type JobQuality struct {

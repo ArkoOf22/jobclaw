@@ -37,6 +37,12 @@ type Scorer struct {
 	candidate   config.Candidate
 	preferences config.JobPreferences
 	matcher     *CandidateMatcher
+
+	// titleFamily is the set of related job titles the candidate is targeting,
+	// seeded from candidate.yaml target_roles (primary + secondary). It lets
+	// scoreRole credit sibling titles the way LinkedIn/Naukri do, and it is
+	// personalised and editable in one place the candidate already owns.
+	titleFamily []string
 }
 
 func NewScorer(
@@ -47,7 +53,22 @@ func NewScorer(
 		candidate:   candidate,
 		preferences: preferences,
 		matcher:     NewCandidateMatcher(candidate),
+		titleFamily: buildTitleFamily(candidate.TargetRoles),
 	}
+}
+
+// buildTitleFamily flattens the candidate's primary and secondary target roles
+// into a single de-duplicated list. These are the titles the candidate already
+// declared they want, so treating them as a family adds no new assumptions — it
+// just stops the scorer from demanding an exact match against the preferences
+// role lists.
+func buildTitleFamily(roles config.TargetRoles) []string {
+	combined := append(
+		append([]string{}, roles.Primary...),
+		roles.Secondary...,
+	)
+
+	return uniqueStrings(combined)
 }
 
 func (s *Scorer) Score(
@@ -91,6 +112,7 @@ func (s *Scorer) Score(
 	role := scoreRole(
 		j.Title,
 		s.preferences.Roles,
+		s.titleFamily,
 	)
 
 	requiredYears, requiredYearsFound := extractRequiredYears(
@@ -176,6 +198,24 @@ func (s *Scorer) Score(
 		overall = (rawScore / maxRawScore) * 100.0
 	}
 
+	// Demotion penalty: a title on the demoted list (e.g. "Senior"/"Sr"/"Lead")
+	// is not vetoed, but it ranks below an equivalent non-senior role. Applied
+	// to the normalised score so a genuinely strong senior match can still clear
+	// the shortlist threshold on its merits, while a marginal one drops out.
+	// This is the "rank lower, stay visible" behaviour that mirrors how the job
+	// boards' top-choices lists treat a slight seniority mismatch.
+	demoted := containsAny(
+		strings.ToLower(j.Title),
+		s.preferences.Roles.Demoted,
+	)
+
+	if demoted {
+		overall -= seniorityDemotionPenalty
+		if overall < 0 {
+			overall = 0
+		}
+	}
+
 	// Name the excluded signals. Without this the breakdown still lists a value
 	// for a component that did not count, which reads as though it contributed.
 	excluded := excludedSignalNames(
@@ -210,6 +250,11 @@ func (s *Scorer) Score(
 		recommendation = RecommendationSkip
 	}
 
+	// Hard title veto: only genuinely-unreachable roles and clear mismatches.
+	// "Senior"/"Sr"/"Lead" no longer live here — they are demoted, not hidden,
+	// because in India those titles are often 3-4 year roles the candidate can
+	// legitimately apply to. Erasing them was the biggest reason recognised-good
+	// roles never appeared.
 	if containsAny(
 		strings.ToLower(j.Title),
 		s.preferences.Roles.Excluded,
@@ -217,18 +262,15 @@ func (s *Scorer) Score(
 		recommendation = RecommendationSkip
 	}
 
-	// A role demanding years the candidate does not have is not a weak match, it
-	// is the wrong job. Scoring it low is not enough: a strong stack-and-domain
-	// fit still clears the threshold on the other components, which is how "5+
-	// years" roles reached the shortlist. Veto it outright.
-	//
-	// The ceiling is the highest stated requirement that is still acceptable, so
-	// a posting asking for exactly the candidate's years survives and anything
-	// above it does not. It comes from preferences rather than being derived
-	// from the candidate's years plus a hardcoded stretch: the previous
-	// two-year stretch silently admitted every "3-4 years" posting, and there
-	// was no way to say otherwise without editing Go.
-	if requiredYearsFound && requiredYears > s.experienceCeiling() {
+	// A role demanding far more experience than the candidate has is the wrong
+	// job, and a hard veto beyond a real ceiling still makes sense: "8+ years"
+	// is not a stretch, it is a different candidate. But the previous behaviour
+	// vetoed anything above the candidate's exact years, which hid every "3-4
+	// years" posting. Now the ceiling is a genuine reach limit (default 5), and
+	// the graded experienceScore already penalises the closer gaps, so a "4
+	// years" role ranks lower but stays visible. The true required_years is
+	// always printed in the reasoning, so the gap is never concealed.
+	if requiredYearsFound && requiredYears > s.experienceHardCeiling() {
 		recommendation = RecommendationSkip
 	}
 
@@ -270,23 +312,24 @@ func (s *Scorer) Score(
 			strings.Join(excluded, ","),
 			maxRawScore,
 			formatRequiredYears(requiredYears, requiredYearsFound),
-			s.experienceCeiling(),
+			s.experienceHardCeiling(),
 		),
 	}
 }
 
-// experienceCeiling is the highest stated experience requirement a posting may
-// carry and still be considered.
+// experienceHardCeiling is the genuine reach limit: a posting demanding more
+// than this is vetoed. It is deliberately well above the candidate's own years
+// so "3-5 years" roles stay visible and only get a graded score penalty; the
+// veto catches the "8+ years" postings that are a different candidate's job.
 //
-// Falls back to the candidate's own years when preferences do not set one, so an
-// absent config key tightens the filter rather than disabling it. A filter that
-// silently turns itself off is the failure mode worth designing against here.
-func (s *Scorer) experienceCeiling() float64 {
-	if ceiling := s.preferences.ExperienceRequired.MaxRequiredYears; ceiling > 0 {
+// Falls back to defaultExperienceHardCeiling when unset, so the veto never
+// silently disables itself.
+func (s *Scorer) experienceHardCeiling() float64 {
+	if ceiling := s.preferences.ExperienceRequired.HardCeilingYears; ceiling > 0 {
 		return ceiling
 	}
 
-	return s.candidate.Experience.TotalYears
+	return defaultExperienceHardCeiling
 }
 
 // formatRequiredYears keeps "the posting stated nothing" distinguishable from
@@ -304,8 +347,21 @@ func formatRequiredYears(years float64, found bool) string {
 // functions in rules.go, and are the denominator contributions used when a
 // signal is present.
 const (
-	maxSkillsScore          = 20.0
-	maxCandidateSkillsScore = 10.0
+	// Candidate-skill overlap is the dominant signal, mirroring how LinkedIn and
+	// Naukri "top choices" rank: they reward how much of the posting's required
+	// skills the candidate actually covers, far more than raw keyword presence.
+	//
+	// This is a deliberate inversion of the previous weighting, where raw
+	// keyword counting (maxSkillsScore) outweighed real candidate coverage
+	// (maxCandidateSkillsScore) two-to-one. That rewarded a job for merely
+	// mentioning many skills, whether or not the candidate had them, and is why
+	// JDs the candidate genuinely matched still failed to clear the threshold.
+	//
+	// maxSkillsScore is kept as a small booster for skill-dense postings rather
+	// than removed, since a posting listing many relevant technologies is still
+	// weak positive evidence.
+	maxSkillsScore          = 10.0
+	maxCandidateSkillsScore = 25.0
 	maxRoleScore            = 15.0
 	maxExperienceScore      = 15.0
 	maxDomainScore          = 10.0
@@ -313,6 +369,20 @@ const (
 	maxLocationScore        = 10.0
 	maxCompanyScore         = 5.0
 	maxCompensationScore    = 10.0
+)
+
+const (
+	// seniorityDemotionPenalty is the number of normalised score points a
+	// demoted title (e.g. "Senior"/"Sr"/"Lead") loses. Large enough that a
+	// marginal senior role drops below the shortlist threshold, small enough
+	// that a genuinely strong senior match can still clear it on merit.
+	seniorityDemotionPenalty = 12.0
+
+	// defaultExperienceHardCeiling is the veto line used when preferences do not
+	// set hard_ceiling_years. Well above a typical mid-level candidate's years,
+	// so "3-5 years" roles stay visible and only "8+ years"-style postings are
+	// vetoed.
+	defaultExperienceHardCeiling = 5.0
 )
 
 // scoreSignal is one scoring component together with whether the underlying

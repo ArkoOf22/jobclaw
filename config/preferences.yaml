@@ -53,14 +53,11 @@ job_preferences:
       - "Apprentice"
       - "Graduate Programme"
       - "Co-op"
-      # Seniority well above two years of experience. "Senior", "Sr", and "Lead"
-      # are here because those titles almost always want 4+ years, and many state
-      # no explicit year count in the body, so the experience veto cannot see
-      # them: it fires only on a figure the posting actually prints. Relax these
-      # lines if you want to see senior roles again.
-      - "Senior"
-      - "Sr"
-      - "Lead"
+      # Genuinely unreachable seniority for a 2-year candidate. These titles
+      # mean 8+ years or people-management, not a stretch, so they stay hard
+      # vetoes. "Senior"/"Sr"/"Lead" are NOT here any more — they moved to
+      # `demoted` below, because in India those often mean 3-4 years and the
+      # candidate can legitimately apply. See that list to tune.
       - "Staff Engineer"
       - "Staff"
       - "Senior Staff"
@@ -80,6 +77,18 @@ job_preferences:
       - "Her"
       - "Returnship"
       - "Women in Tech"
+
+    # Demoted titles are NOT vetoed — they stay visible but take a ranking
+    # penalty (seniorityDemotionPenalty in the scorer, currently 12 points). In
+    # India "Senior"/"Sr"/"Lead" backend roles often want 3-4 years, which a
+    # strong 2-year candidate can legitimately apply to, so the system shows
+    # them ranked below equivalent non-senior roles rather than hiding them.
+    # A genuinely strong senior match can still clear the shortlist threshold.
+    # Move any of these into `excluded` above to hard-veto it again.
+    demoted:
+      - "Senior"
+      - "Sr"
+      - "Lead"
 
   locations:
     preferred:
@@ -148,19 +157,21 @@ job_preferences:
       - "Grafana"
 
   experience:
-    # The highest stated experience requirement a posting may ask for and still
-    # be shown. Anything above this is vetoed outright, whatever it scores.
+    # max_required_years is the comfortable target, not a veto any more. A
+    # posting at or below it earns full experience marks; above it the graded
+    # experience score drops (candidate+1yr → 10, +2yr → 5, beyond → 0) so the
+    # role ranks lower but stays visible. Kept at the candidate's 2 years.
     #
-    # Set to the candidate's actual 2 years, deliberately with no stretch. The
-    # previous behaviour allowed two years above, which admitted every "3-4
-    # years" and "4-5 years" posting; combined with a parser that could not read
-    # escaped HTML at all, roles asking for 8+ years were reaching the shortlist
-    # with full marks on experience.
-    #
-    # A range counts by its low end, so "2-4 years" still qualifies: that
-    # posting is genuinely open to a two-year candidate. Raise this to 3 or 4 to
-    # widen; leaving it unset falls back to the candidate's total_years.
+    # A range counts by its low end, so "2-4 years" scores as 2.
     max_required_years: 2
+
+    # hard_ceiling_years is the real reach limit: a posting demanding MORE than
+    # this is vetoed to SKIP. Set to 5 so "3-5 years" roles stay visible with a
+    # low experience score (the honest signal — you see the gap in the stored
+    # reasoning), while "8+ years" postings, which are a different candidate's
+    # job, are removed. Raise to see more senior roles; lower to tighten.
+    # Unset falls back to 5 in the scorer, so the veto never disables itself.
+    hard_ceiling_years: 5
 
   job_quality:
     # Lowered from 70 → 65 → 60: a fresh-start 24h sweep produced only 4 matches at 65,

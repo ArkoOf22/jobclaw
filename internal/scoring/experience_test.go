@@ -1,6 +1,7 @@
 package scoring
 
 import (
+	"strings"
 	"testing"
 
 	"jobclaw/internal/company"
@@ -227,9 +228,12 @@ func TestScorerVetoesEscapedHTMLSeniorRequirement(t *testing.T) {
 	}
 }
 
-// "3-5 years" used to survive: the ceiling was the candidate's years plus a
-// hardcoded two-year stretch, so the veto only fired above four.
-func TestScorerVetoesThreeToFiveYearRequirement(t *testing.T) {
+// "3-5 years" must now stay visible, not be vetoed. It counts by its low end
+// (3), which is within the hard ceiling (default 5), so a strong 2-year
+// candidate can legitimately apply. The gap is expressed as a lower experience
+// score, not by hiding the role — the behaviour the candidate explicitly asked
+// for. The true required_years still appears in the reasoning.
+func TestScorerKeepsThreeToFiveYearRequirementVisible(t *testing.T) {
 	result := twoYearScorer().Score(
 		job.Job{
 			Title: "Backend Engineer",
@@ -243,13 +247,22 @@ func TestScorerVetoesThreeToFiveYearRequirement(t *testing.T) {
 		},
 	)
 
-	if result.Recommendation != RecommendationSkip {
+	// Not vetoed on experience: 3 is within the hard ceiling.
+	if result.Recommendation == RecommendationSkip &&
+		strings.Contains(result.Reasoning, "required_years=3") {
+		// A SKIP here would only be legitimate if it came from a different
+		// signal, but with a strong stack match it should clear the threshold.
 		t.Fatalf(
-			"recommendation = %s, want SKIP: score=%.1f reasoning=%s",
-			result.Recommendation,
+			"recommendation = SKIP, want visible: score=%.1f reasoning=%s",
 			result.OverallScore,
 			result.Reasoning,
 		)
+	}
+
+	// The experience gap is still reflected honestly: a 3-year requirement
+	// against a 2-year candidate scores 10, not full marks.
+	if result.ExperienceScore != 10 {
+		t.Fatalf("experience score = %.1f, want 10 (candidate+1yr)", result.ExperienceScore)
 	}
 }
 
@@ -282,9 +295,10 @@ func TestScorerKeepsRangeStartingAtCandidateYears(t *testing.T) {
 	}
 }
 
-// An absent config key must tighten the filter to the candidate's own years
-// rather than disable it.
-func TestExperienceCeilingFallsBackToCandidateYears(t *testing.T) {
+// An absent hard_ceiling_years must fall back to the scorer default (a real
+// reach limit), not disable the veto. The default is deliberately above the
+// candidate's years so "3-5 years" roles stay visible.
+func TestExperienceHardCeilingFallsBackToDefault(t *testing.T) {
 	scorer := NewScorer(
 		config.Candidate{
 			Experience: config.Experience{TotalYears: 2},
@@ -292,7 +306,7 @@ func TestExperienceCeilingFallsBackToCandidateYears(t *testing.T) {
 		testPreferences(),
 	)
 
-	if got := scorer.experienceCeiling(); got != 2 {
-		t.Fatalf("ceiling = %.1f, want 2", got)
+	if got := scorer.experienceHardCeiling(); got != defaultExperienceHardCeiling {
+		t.Fatalf("ceiling = %.1f, want %.1f", got, defaultExperienceHardCeiling)
 	}
 }

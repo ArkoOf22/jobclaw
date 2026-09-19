@@ -16,16 +16,18 @@ func TestScoreCandidateSkills(t *testing.T) {
 		t.Fatalf("score = %.1f, want 0.0", got)
 	}
 
+	// Candidate-skill overlap is now the dominant signal, max 25 (was 10). A 50%
+	// coverage of the posting's required skills therefore scores 12.5.
 	match.MatchedSkills = 5
 
-	if got := scoreCandidateSkills(match); got != 5.0 {
-		t.Fatalf("score = %.1f, want 5.0", got)
+	if got := scoreCandidateSkills(match); got != 12.5 {
+		t.Fatalf("score = %.1f, want 12.5", got)
 	}
 
 	match.MatchedSkills = 10
 
-	if got := scoreCandidateSkills(match); got != 10.0 {
-		t.Fatalf("score = %.1f, want 10.0", got)
+	if got := scoreCandidateSkills(match); got != 25.0 {
+		t.Fatalf("score = %.1f, want 25.0", got)
 	}
 }
 
