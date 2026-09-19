@@ -126,6 +126,30 @@ jobclaw_shortlisted_by_source
 First samples land within a minute or two of Alloy starting. If Explore autocompletes
 the metric names, the push is working.
 
+## Step 6: import the dashboard
+
+`deploy/alloy/jobclaw-dashboard.json` is a starter dashboard covering both halves
+of the question: is the job search producing anything, and what is this box
+costing.
+
+In Grafana Cloud: **Dashboards → New → Import**, paste the file contents, and pick
+your Prometheus data source when prompted.
+
+| Row | Panels |
+| :--- | :--- |
+| Pipeline | jobs discovered, actionable now, shortlisted by source, recommendation mix, jobs by source, applications by status |
+| Host cost and stability | OOM kills, memory available, memory pressure (PSI), CPU, disk free |
+
+Two panels are worth calling out:
+
+- **OOM kills** turns red on any increase. This box has been through two kills
+  already and both were found in `dmesg` long after the fact.
+- **Memory pressure (PSI)** is the leading indicator. It climbs before a kill, so
+  it is the one to watch if you want warning rather than an autopsy.
+
+The default time range is 7 days and the timezone is set to IST, matching the
+discovery schedule.
+
 ## What gets collected
 
 Two scrape targets.
