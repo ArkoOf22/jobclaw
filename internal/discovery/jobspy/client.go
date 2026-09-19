@@ -22,6 +22,10 @@ var _ discovery.Source = (*Client)(nil)
 type Client struct {
 	endpoint   string
 	httpClient *http.Client
+
+	// now supplies the current time for the search-term rotation window. It is a
+	// field only so tests can pin it; production always uses time.Now.
+	now func() time.Time
 }
 
 func NewClient(endpoint string) *Client {
@@ -36,6 +40,7 @@ func NewClient(endpoint string) *Client {
 			// connection rather than a single call, so the ceiling is generous.
 			Timeout: 10 * time.Minute,
 		},
+		now: time.Now,
 	}
 }
 
@@ -50,11 +55,36 @@ var searchSites = []string{"linkedin", "indeed", "glassdoor", "naukri"}
 
 // maxSearchTerms bounds how many distinct queries a single discovery run issues.
 // Each term is a separate scrape across every site and takes real time, so the
-// list is capped rather than run for all sixteen configured roles.
+// list is capped rather than run for all seventeen configured roles.
+//
+// The cap is a rate-limit decision, not a coverage decision. It used to be both:
+// searchTerms took the first five keywords and stopped, so the twelve roles after
+// them were configured and never searched once. "Golang Developer" and "Go
+// Developer" were among them, on a Go candidate's profile. See rotation below.
 const maxSearchTerms = 5
 
+// pinnedSearchTerms is how many leading keywords are searched on every run
+// regardless of rotation. The keyword list arrives primary-first, so these are
+// the highest-value queries and they should not wait a full cycle after a failed
+// run. The rest of the window rotates.
+const pinnedSearchTerms = 2
+
+// termRotationPeriod is how long one rotation window lasts. It matches the
+// discovery timer's six-hour cadence so that consecutive scheduled runs advance
+// to the next slice instead of repeating the same one.
+//
+// Deriving the slice from the clock keeps this stateless: no cursor column, no
+// migration, and an ad-hoc run in between simply lands in whichever window it
+// falls in rather than stealing the next scheduled run's slice.
+const termRotationPeriod = 6 * time.Hour
+
 func (c *Client) Discover(ctx context.Context, req discovery.Request) ([]job.Job, error) {
-	terms := searchTerms(req.Keywords)
+	now := c.now
+	if now == nil {
+		now = time.Now
+	}
+
+	terms := searchTerms(req.Keywords, now())
 	if len(terms) == 0 {
 		return nil, fmt.Errorf("at least one keyword is required")
 	}
@@ -146,12 +176,11 @@ func (c *Client) Discover(ctx context.Context, req discovery.Request) ([]job.Job
 	return collected, nil
 }
 
-// searchTerms turns the configured keywords into a bounded, de-duplicated list
-// of clean search queries, preserving order so the primary roles are searched
-// first.
-func searchTerms(keywords []string) []string {
+// cleanKeywords normalises the configured keywords into a de-duplicated list,
+// preserving order so the primary roles stay at the front.
+func cleanKeywords(keywords []string) []string {
 	seen := make(map[string]bool)
-	terms := make([]string, 0, maxSearchTerms)
+	cleaned := make([]string, 0, len(keywords))
 
 	for _, keyword := range keywords {
 		keyword = strings.TrimSpace(keyword)
@@ -165,11 +194,64 @@ func searchTerms(keywords []string) []string {
 		}
 
 		seen[key] = true
-		terms = append(terms, keyword)
+		cleaned = append(cleaned, keyword)
+	}
 
-		if len(terms) >= maxSearchTerms {
-			break
-		}
+	return cleaned
+}
+
+// searchTerms selects which keywords this run searches: a pinned prefix plus a
+// rotating slice of the remainder.
+//
+// A run cannot search every configured role -- each term is a separate scrape
+// across four boards, and issuing seventeen of them would both lengthen the run
+// past its timeout and scrape harder than the boards tolerate from a datacenter
+// address. But capping by truncation meant the tail was never searched at all.
+//
+// Rotation resolves that without scraping more per run. The first
+// pinnedSearchTerms keywords go out every time, because they are the primary
+// roles and the most productive queries; the rest of the window advances by one
+// slice every termRotationPeriod, so with four scheduled runs a day the whole
+// list is covered in roughly a day.
+//
+// The slice wraps, so coverage is a rolling cycle rather than a fixed schedule.
+// Consecutive runs never repeat the same rotating terms unless the list is short
+// enough to fit in a single window, in which case rotation is a no-op and every
+// term is searched every run.
+func searchTerms(keywords []string, at time.Time) []string {
+	cleaned := cleanKeywords(keywords)
+
+	// Everything fits: rotation would only introduce gaps for no benefit.
+	if len(cleaned) <= maxSearchTerms {
+		return cleaned
+	}
+
+	pinned := pinnedSearchTerms
+	if pinned > len(cleaned) {
+		pinned = len(cleaned)
+	}
+
+	terms := make([]string, 0, maxSearchTerms)
+	terms = append(terms, cleaned[:pinned]...)
+
+	rotating := cleaned[pinned:]
+
+	slots := maxSearchTerms - pinned
+	if slots <= 0 || len(rotating) == 0 {
+		return terms
+	}
+
+	// Window index from the clock rather than stored state. Negative times cannot
+	// occur in practice but would produce a negative modulus, so clamp.
+	window := at.UTC().Unix() / int64(termRotationPeriod/time.Second)
+	if window < 0 {
+		window = 0
+	}
+
+	start := int(window*int64(slots)) % len(rotating)
+
+	for i := 0; i < slots && i < len(rotating); i++ {
+		terms = append(terms, rotating[(start+i)%len(rotating)])
 	}
 
 	return terms
