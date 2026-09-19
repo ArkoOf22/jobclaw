@@ -122,6 +122,78 @@ control, and SSM already provides access.
   `samples_failed_total` should stay at 0. Setup guide: `docs/grafana-cloud-setup.md`.
   Because host metrics include `node_vmstat_oom_kill` and PSI memory pressure, the
   next OOM kill is now visible as a graph rather than found later in `dmesg`.
+
+## The agent's context bundle is the real cost and memory driver
+
+Not JobClaw. `OPENROUTER_API_KEY` is unset and no resumes have been generated, so
+JobClaw's own model spend is nil. The spend and the memory pressure both come from
+the OpenClaw agent's per-request context.
+
+Measured on 2026-09-19 across 200 session trajectories and 478 model calls:
+
+| Prompt tokens per call | |
+| :--- | :--- |
+| median | 20,022 |
+| p75 | 85,633 |
+| max | 511,411 |
+
+Bimodal: routine calls sit near 20k, with a heavy tail from long working sessions.
+
+Composition of a large request, from `data.systemPrompt`, `data.tools` and
+`data.messages` in the trajectory files:
+
+| Component | Share |
+| :--- | :--- |
+| conversation messages | 54% |
+| system prompt | 25% |
+| tool definitions | 20% |
+
+Where to measure it: `~/.openclaw/agents/main/sessions/*.trajectory.jsonl`. Real
+token counts are at `data.usage.{input,output,total}`; cache activity is at
+`data.promptCache.lastCallUsage.{cacheRead,cacheWrite}`. These files contain
+personal conversation, so measure sizes rather than printing content.
+
+Three things that are **not** true, each of which cost time to disprove:
+
+- **There is no poll timer.** The agent is event-driven. Calls are triggered by
+  Telegram messages and by `hooks.gmail`, which watches `label = INBOX` with
+  `includeBody = true` and `maxBytes = 20000`. Every inbox email wakes the agent
+  and runs a full-bundle call, so inbox volume is what drives call count.
+- **Skill file size does not matter per call.** Only skill *descriptions* ship in
+  the system prompt; bodies load on activation. Verified by searching the captured
+  system prompt for distinctive strings from each `SKILL.md`. Shortening a skill
+  file saves nothing.
+- **Prompt caching is not running.** Zero cache reads and zero cache writes. The
+  system prompt plus tool definitions are 46% of every request and byte-identical
+  each time, which is the ideal caching case, but `qwen3.5-flash` is served via
+  Alibaba and OpenRouter requires per-message opt-in for that provider rather than
+  enabling it automatically. The configured fallbacks are Gemini Flash, which does
+  cache implicitly.
+
+### Applied: unused media tools denied
+
+`tools.profile` is `coding`, which loaded 26 tools including `video_generate`,
+`image_generate` and `music_generate` — descriptions of video and music generation
+sent to a job-search bot on every call.
+
+Denied globally via `tools.deny` rather than changing the profile, because
+switching to `messaging` risked dropping `exec`, and the JobClaw skill is entirely
+shell-based through `scripts/jobclaw-agent`. A denylist overrides the profile
+without touching anything else.
+
+Measured effect: 26 tools to 23, and the tool block from 26,367 to 19,193 bytes.
+`skill_workshop` was deliberately kept — it is what created the Gmail skill, per
+`~/.openclaw/skill-workshop/proposals.json`.
+
+Config backed up first as `~/.openclaw/openclaw.json.bak-pre-tooldeny-*`. Verify
+with `openclaw config get tools.deny`. To measure a change without waiting for a
+real event:
+
+```bash
+openclaw agent --session-key verify-1 -m "Reply with the single word: ok"
+```
+
+Omitting `--deliver` keeps the reply off Telegram.
 - **Tailscale** (`100.107.167.115`) — an alternative network path if SSM is ever unavailable.
 - `openclaw-gateway` on `127.0.0.1:18789` and `gog` on `127.0.0.1:8788` — unrelated tooling.
 
