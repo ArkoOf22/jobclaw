@@ -268,11 +268,43 @@ Commands that mutate this state include `approve`, `reject`, `application <jobID
 `CreateForApprovedJob`), `prepare`, and `submit`. Back up the DB before destructive experiments, and
 prefer a scratch `JOBCLAW_DB_PATH` for testing.
 
-## Missing credential
+## Credentials
 
-There is **no `.env`** on the host and `OPENROUTER_API_KEY` is not in any shell profile. Every
-LLM-backed path fails without it: resume tailoring, questionnaire answer fallback, and the
-`application`, `prepare`, and `resume` subcommands all abort with
-`resume LLM API key environment variable "OPENROUTER_API_KEY" is not set`.
+`OPENROUTER_API_KEY` **is** present in `/home/openclaw/jobclaw/.env` and resume
+tailoring works. Verified 2026-09-19: the key is set, and tailored resumes exist
+for applications 7, 473 and 701, with 701 compiled through LaTeX to a PDF.
 
-This must be supplied at `/home/openclaw/jobclaw/.env` before any end-to-end run.
+This section previously said the key was missing and every LLM-backed path
+failed. That was true when written and is no longer. If `resume`, `application`,
+`prepare` or questionnaire fallback fail with
+`resume LLM API key environment variable "OPENROUTER_API_KEY" is not set`, the
+`.env` was not sourced rather than the key being absent — the scheduled units
+source it explicitly, so check that first.
+
+`.env` also holds `JOBCLAW_SHEET_ID`, `JOBCLAW_SHEET_ACCOUNT` and
+`GOG_KEYRING_PASSWORD`. The last is not optional: `gog` cannot prompt for a
+keyring password from a timer.
+
+## The real bottleneck is conversion, not capability
+
+Worth stating plainly because every remaining engineering instinct points at the
+wrong end of the pipeline. As of 2026-09-19:
+
+| Stage | Count |
+| :--- | ---: |
+| Jobs discovered | 2,161 |
+| Shortlisted | 639 |
+| Awaiting a human decision | 2,150 |
+| Applications created | 2 |
+| Jobs marked applied | 9 |
+
+Discovery, scoring, resume tailoring, questionnaire ingestion and readiness
+validation all work. Almost nothing flows through them, because the approval gate
+is deliberately human and 2,150 decisions are queued behind one person.
+
+This is not a defect to fix in code, and adding more discovery sources or more
+scoring accuracy will not move it — both make the queue longer. The useful work
+is at the far end: getting a handful of the top-scoring jobs through approval,
+resume, questionnaire and submission, and recording outcomes with
+`jobclaw mark`. Until outcomes are recorded there is also no signal to calibrate
+scoring against, so the loop cannot close on itself.
