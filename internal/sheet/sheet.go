@@ -222,6 +222,12 @@ func firstLines(text string, limit int) string {
 
 // Column letters, derived from Header() order. Kept as constants because the
 // Sheets API addresses cells by letter, not by index.
+//
+// columnStatus (J) can be turned into a click-to-pick dropdown in the Sheet UI.
+// It is a one-time manual step because gog cannot send a setDataValidation
+// request; see docs/sheet-status-dropdown.md for the setup and the exact value
+// list. Note the sheet is one-way: a dropdown edit does not update the database,
+// so `jobclaw mark` remains the source-of-truth update.
 const (
 	columnResume = "I"
 	columnStatus = "J"

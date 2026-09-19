@@ -245,6 +245,34 @@ func main() {
 			runScore(databasePath, cfg, db)
 			return
 
+		case "metrics":
+			// Long-running HTTP server exposing /metrics. Address is
+			// configurable so it can bind to loopback (default) or a Tailscale
+			// address for off-box scraping.
+			addr := getEnvOrDefault("JOBCLAW_METRICS_ADDR", "127.0.0.1:9090")
+
+			args := os.Args[2:]
+			for len(args) > 0 {
+				if args[0] == "--addr" {
+					if len(args) < 2 {
+						log.Fatal("--addr requires a host:port value")
+					}
+
+					addr = args[1]
+					args = args[2:]
+
+					continue
+				}
+
+				log.Fatalf(
+					"unknown argument %q; usage: jobclaw metrics [--addr host:port]",
+					args[0],
+				)
+			}
+
+			runMetrics(addr, db)
+			return
+
 		case "shortlist":
 			runShortlist(db)
 			return
