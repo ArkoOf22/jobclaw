@@ -8,7 +8,6 @@
   ],
   "timezone": "Asia/Kolkata",
   "schemaVersion": 39,
-  "version": 1,
   "refresh": "5m",
   "time": {
     "from": "now-7d",
