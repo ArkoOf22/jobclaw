@@ -163,12 +163,59 @@ Three things that are **not** true, each of which cost time to disprove:
   the system prompt; bodies load on activation. Verified by searching the captured
   system prompt for distinctive strings from each `SKILL.md`. Shortening a skill
   file saves nothing.
-- **Prompt caching is not running.** Zero cache reads and zero cache writes. The
-  system prompt plus tool definitions are 46% of every request and byte-identical
-  each time, which is the ideal caching case, but `qwen3.5-flash` is served via
-  Alibaba and OpenRouter requires per-message opt-in for that provider rather than
-  enabling it automatically. The configured fallbacks are Gemini Flash, which does
-  cache implicitly.
+- **Prompt caching is off, and it should stay off.** Zero cache reads, zero cache
+  writes. The system prompt plus tool definitions are 46% of every request and
+  byte-identical each time, so this looks like the textbook caching case. It is
+  not worth pursuing, and the reason is pricing rather than plumbing. See below.
+
+### Settled: prompt caching is not worth enabling
+
+Investigated on 2026-09-19 with `diagnostics.cacheTrace` enabled temporarily.
+Do not re-litigate this without new pricing.
+
+OpenClaw is already doing its part. The trace shows it tracks
+`systemPromptDigest` and `toolDigest`, and the `cache:result` stage reports
+`note = "stable cache inputs"` — it correctly recognises the prompt prefix is
+reusable. What it will not do is send a cache key, because the model entry for
+`openrouter/qwen/qwen3.5-flash-02-23` carries `cost.cacheRead = 0`,
+`cost.cacheWrite = 0` and no `supportsPromptCacheKey` in `compat`. The call goes
+out over `modelApi = openai-completions`, so Anthropic-style `cache_control`
+markers do not apply to this path at all.
+
+The pricing is what closes it. Per OpenRouter's own model API:
+
+| model | in $/M | out $/M | cache read $/M |
+| :--- | ---: | ---: | ---: |
+| `qwen/qwen3.5-flash-02-23` (current) | 0.065 | 0.26 | none offered |
+| `google/gemini-2.5-flash` | 0.30 | 2.50 | 0.03 |
+| `google/gemini-2.5-flash-lite` | 0.10 | 0.40 | 0.01 |
+
+For a routine 20,000-prompt, 400-completion call:
+
+- qwen, no caching: **$0.001404**
+- gemini-2.5-flash, cache hitting on all 46%: $0.004516 — **3.2x more expensive**
+- gemini-2.5-flash-lite, cache hitting: $0.001332 — 5% cheaper, but $0.002160 on
+  a cache miss, which is 54% *more* expensive
+
+So the best case for switching is a 5% saving that depends on every call hitting
+a warm cache, against a 54% penalty when it does not. Output pricing is what
+dominates: gemini-2.5-flash bills output at $2.50/M against qwen's $0.26/M,
+nearly ten times, and no discount on input prefix can recover that.
+
+The current model is simply cheaper without caching than the cache-capable
+alternatives are with it. This is the same trap as `tech.md`'s note about not
+chasing the OpenRouter discount list: the headline feature is not the price.
+
+Turn the trace back on the same way if pricing changes:
+
+```bash
+openclaw config patch --file /tmp/ct.json5   # diagnostics.cacheTrace.enabled=true
+sudo systemctl restart openclaw-gateway
+```
+
+Set `includeMessages`, `includePrompt` and `includeSystem` to false when doing so.
+Those default to true and would write conversation content to
+`~/.openclaw/logs/cache-trace.jsonl`. Disable it again afterwards.
 
 ### Applied: unused media tools denied
 
