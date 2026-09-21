@@ -141,11 +141,16 @@ type ExperienceRequired struct {
 	// lower rather than disappear.
 	MaxRequiredYears float64 `yaml:"max_required_years"`
 
-	// HardCeilingYears is the genuine reach limit: a posting stating more than
-	// this is vetoed to SKIP, because it is a different candidate's job, not a
-	// stretch. Zero falls back to a sensible default (defaultExperienceHardCeiling
-	// in the scorer) so the veto is never accidentally disabled, but it stays
-	// well above MaxRequiredYears so "3-5 years" roles remain visible.
+	// HardCeilingYears is the veto line: a posting stating more years than this
+	// is forced to SKIP whatever else it scores.
+	//
+	// Set it to the candidate's real experience. It was briefly set above it so
+	// slightly-senior roles would stay visible with a reduced score, which in
+	// practice filled the shortlist with three-to-eight-year roles and moved the
+	// filtering back onto the reader.
+	//
+	// Zero falls back to the candidate's own total years, so an absent key
+	// tightens the filter rather than disabling it.
 	HardCeilingYears float64 `yaml:"hard_ceiling_years"`
 }
 

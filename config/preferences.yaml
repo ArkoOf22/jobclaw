@@ -53,11 +53,48 @@ job_preferences:
       - "Apprentice"
       - "Graduate Programme"
       - "Co-op"
-      # Genuinely unreachable seniority for a 2-year candidate. These titles
-      # mean 8+ years or people-management, not a stretch, so they stay hard
-      # vetoes. "Senior"/"Sr"/"Lead" are NOT here any more — they moved to
-      # `demoted` below, because in India those often mean 3-4 years and the
-      # candidate can legitimately apply. See that list to tune.
+      # Seniority a 2-year candidate cannot reach.
+      #
+      # "Senior"/"Sr"/"Lead" are back here after being tried on the `demoted`
+      # list. The theory was that in India those often mean 3-4 years, so they
+      # should rank low rather than vanish. Measured against a real shortlist it
+      # did not work: 28 senior-titled roles stayed visible, none of them
+      # applicable, and the candidate spent the time filtering them by hand.
+      #
+      # Level markers matter as much as the words. "Software Engineer III" and
+      # "SDE 3" are 5-8 year roles that almost never print a year figure, so the
+      # experience veto is blind to them — 63 of them were reaching the
+      # shortlist. Roman numerals are listed bare because "iii" cannot collide
+      # with anything; digits are listed as two-word phrases because title
+      # matching is word-based and a bare "3" would also veto
+      # "Java Developer 2-3 Yrs", which is a job worth seeing.
+      #
+      # Note "II" is deliberately absent: "SDE II" and "Software Engineer II"
+      # are target roles.
+      - "Senior"
+      - "Sr"
+      - "Lead"
+      - "III"
+      - "IV"
+      - "Engineer 3"
+      - "Engineer 4"
+      - "Engineer 5"
+      - "Developer 3"
+      - "Developer 4"
+      - "Developer 5"
+      - "SDE 3"
+      - "SDE 4"
+      - "Level 5"
+      - "Level 6"
+      # Bare "Manager" because "Engineering Manager" above does not catch
+      # "Manager of Software Engineering". No individual-contributor title
+      # contains the word, so this is safe as a whole-word match.
+      - "Manager"
+      # Architect roles are senior by definition. SDET is test automation
+      # rather than backend — "QA Engineer" and "Manual Tester" are already
+      # excluded, and this closes the same gap.
+      - "Architect"
+      - "SDET"
       - "Staff Engineer"
       - "Staff"
       - "Senior Staff"
@@ -79,16 +116,18 @@ job_preferences:
       - "Women in Tech"
 
     # Demoted titles are NOT vetoed — they stay visible but take a ranking
-    # penalty (seniorityDemotionPenalty in the scorer, currently 12 points). In
-    # India "Senior"/"Sr"/"Lead" backend roles often want 3-4 years, which a
-    # strong 2-year candidate can legitimately apply to, so the system shows
-    # them ranked below equivalent non-senior roles rather than hiding them.
-    # A genuinely strong senior match can still clear the shortlist threshold.
-    # Move any of these into `excluded` above to hard-veto it again.
-    demoted:
-      - "Senior"
-      - "Sr"
-      - "Lead"
+    # penalty (seniorityDemotionPenalty in the scorer, currently 12 points).
+    #
+    # Deliberately empty. "Senior"/"Sr"/"Lead" lived here and it did not work:
+    # a ranking penalty still leaves the role on the list, and a list the
+    # candidate has to filter by hand is the problem the scorer exists to solve.
+    # They are hard vetoes again, in `excluded` above.
+    #
+    # The mechanism is kept for a title that is genuinely worth seeing ranked
+    # lower rather than hidden. Nothing currently qualifies. If the shortlist
+    # ever runs dry, moving "Senior" here is the first thing to try, because it
+    # widens the list without silently admitting 8-year roles.
+    demoted: []
 
   locations:
     preferred:
@@ -165,13 +204,25 @@ job_preferences:
     # A range counts by its low end, so "2-4 years" scores as 2.
     max_required_years: 2
 
-    # hard_ceiling_years is the real reach limit: a posting demanding MORE than
-    # this is vetoed to SKIP. Set to 5 so "3-5 years" roles stay visible with a
-    # low experience score (the honest signal — you see the gap in the stored
-    # reasoning), while "8+ years" postings, which are a different candidate's
-    # job, are removed. Raise to see more senior roles; lower to tighten.
-    # Unset falls back to 5 in the scorer, so the veto never disables itself.
-    hard_ceiling_years: 5
+    # hard_ceiling_years is the veto line: a posting stating MORE than this is
+    # forced to SKIP whatever else it scores.
+    #
+    # Set to 2, the candidate's actual experience. This was briefly 5, on the
+    # reasoning that a "3-5 years" posting is worth seeing and the gap could be
+    # expressed as a lower score rather than by hiding the role. In practice that
+    # failed: the shortlist filled with 3-5, 5-6 and 3-8 year roles, and the
+    # candidate ended up doing the filtering by hand, opening links for jobs he
+    # could not apply to. A filter that defers the decision to the reader is not
+    # a filter.
+    #
+    # Note ranges count by their LOW end, so this is less strict than it looks:
+    # "2-4 years" reads as 2 and survives, because that posting is genuinely
+    # open to a two-year candidate. "3-5 years" reads as 3 and is vetoed.
+    #
+    # Raise this only if the shortlist runs dry. Unset falls back to the
+    # candidate's own total_years, so an absent key tightens rather than
+    # disables the veto.
+    hard_ceiling_years: 2
 
   job_quality:
     # Lowered from 70 → 65 → 60: a fresh-start 24h sweep produced only 4 matches at 65,

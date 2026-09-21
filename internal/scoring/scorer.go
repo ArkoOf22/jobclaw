@@ -317,16 +317,29 @@ func (s *Scorer) Score(
 	}
 }
 
-// experienceHardCeiling is the genuine reach limit: a posting demanding more
-// than this is vetoed. It is deliberately well above the candidate's own years
-// so "3-5 years" roles stay visible and only get a graded score penalty; the
-// veto catches the "8+ years" postings that are a different candidate's job.
+// experienceHardCeiling is the veto line: a posting stating more years than this
+// is forced to SKIP.
 //
-// Falls back to defaultExperienceHardCeiling when unset, so the veto never
-// silently disables itself.
+// This tracks the candidate's real experience rather than sitting above it. An
+// earlier version deliberately set it higher so a "3-5 years" posting would stay
+// visible with a reduced score, on the theory that the reader could judge the
+// gap. That backfired — the shortlist filled with roles requiring three to eight
+// years and the reader spent their time filtering by hand, which is the work the
+// scorer exists to do.
+//
+// Ranges still count by their low end, so this is less blunt than it appears:
+// "2-4 years" reads as 2 and survives for a two-year candidate.
+//
+// Falls back to the candidate's own total years when unset, and only to a
+// constant if that is unknown too, so an absent config key tightens the filter
+// rather than disabling it.
 func (s *Scorer) experienceHardCeiling() float64 {
 	if ceiling := s.preferences.ExperienceRequired.HardCeilingYears; ceiling > 0 {
 		return ceiling
+	}
+
+	if years := s.candidate.Experience.TotalYears; years > 0 {
+		return years
 	}
 
 	return defaultExperienceHardCeiling
@@ -378,11 +391,14 @@ const (
 	// that a genuinely strong senior match can still clear it on merit.
 	seniorityDemotionPenalty = 12.0
 
-	// defaultExperienceHardCeiling is the veto line used when preferences do not
-	// set hard_ceiling_years. Well above a typical mid-level candidate's years,
-	// so "3-5 years" roles stay visible and only "8+ years"-style postings are
-	// vetoed.
-	defaultExperienceHardCeiling = 5.0
+	// defaultExperienceHardCeiling is the last-resort veto line, used only when
+	// neither hard_ceiling_years nor the candidate's total_years is known.
+	//
+	// Deliberately low. The failure mode that matters is a filter that is too
+	// loose: it fills the shortlist with roles the candidate cannot apply to and
+	// pushes the filtering back onto them. Too strict merely produces a short
+	// list, which is visible and easy to correct by raising the config value.
+	defaultExperienceHardCeiling = 2.0
 )
 
 // scoreSignal is one scoring component together with whether the underlying

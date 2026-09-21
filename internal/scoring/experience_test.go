@@ -228,12 +228,16 @@ func TestScorerVetoesEscapedHTMLSeniorRequirement(t *testing.T) {
 	}
 }
 
-// "3-5 years" must now stay visible, not be vetoed. It counts by its low end
-// (3), which is within the hard ceiling (default 5), so a strong 2-year
-// candidate can legitimately apply. The gap is expressed as a lower experience
-// score, not by hiding the role — the behaviour the candidate explicitly asked
-// for. The true required_years still appears in the reasoning.
-func TestScorerKeepsThreeToFiveYearRequirementVisible(t *testing.T) {
+// "3-5 years" must be vetoed for a two-year candidate.
+//
+// This test previously asserted the opposite. The ceiling was set above the
+// candidate's years so a slightly-senior role would stay visible with a reduced
+// score, on the theory that the reader could weigh the gap themselves. Measured
+// against a real shortlist that was wrong: 3-5, 5-6 and 3-8 year roles crowded
+// the list and the candidate spent their time opening links for jobs they could
+// not apply to. The low end of this range is 3, above a two-year candidate, so
+// it goes.
+func TestScorerVetoesThreeToFiveYearRequirement(t *testing.T) {
 	result := twoYearScorer().Score(
 		job.Job{
 			Title: "Backend Engineer",
@@ -247,22 +251,23 @@ func TestScorerKeepsThreeToFiveYearRequirementVisible(t *testing.T) {
 		},
 	)
 
-	// Not vetoed on experience: 3 is within the hard ceiling.
-	if result.Recommendation == RecommendationSkip &&
-		strings.Contains(result.Reasoning, "required_years=3") {
-		// A SKIP here would only be legitimate if it came from a different
-		// signal, but with a strong stack match it should clear the threshold.
+	if result.Recommendation != RecommendationSkip {
 		t.Fatalf(
-			"recommendation = SKIP, want visible: score=%.1f reasoning=%s",
+			"recommendation = %s, want SKIP: score=%.1f reasoning=%s",
+			result.Recommendation,
 			result.OverallScore,
 			result.Reasoning,
 		)
 	}
 
-	// The experience gap is still reflected honestly: a 3-year requirement
-	// against a 2-year candidate scores 10, not full marks.
-	if result.ExperienceScore != 10 {
-		t.Fatalf("experience score = %.1f, want 10 (candidate+1yr)", result.ExperienceScore)
+	// The figure read must be the low end of the range, and it must be recorded,
+	// so a veto can be audited without re-parsing the description.
+	if !strings.Contains(result.Reasoning, "required_years=3") {
+		t.Errorf("reasoning does not record required_years=3: %s", result.Reasoning)
+	}
+
+	if !strings.Contains(result.Reasoning, "ceiling_years=2.0") {
+		t.Errorf("reasoning does not record ceiling_years=2.0: %s", result.Reasoning)
 	}
 }
 
@@ -295,16 +300,27 @@ func TestScorerKeepsRangeStartingAtCandidateYears(t *testing.T) {
 	}
 }
 
-// An absent hard_ceiling_years must fall back to the scorer default (a real
-// reach limit), not disable the veto. The default is deliberately above the
-// candidate's years so "3-5 years" roles stay visible.
-func TestExperienceHardCeilingFallsBackToDefault(t *testing.T) {
+// An absent hard_ceiling_years must fall back to the candidate's own years, so
+// forgetting the key tightens the filter rather than loosening it. The previous
+// fallback sat above the candidate's experience, which meant an unset key
+// silently admitted roles they could not apply to.
+func TestExperienceHardCeilingFallsBackToCandidateYears(t *testing.T) {
 	scorer := NewScorer(
 		config.Candidate{
 			Experience: config.Experience{TotalYears: 2},
 		},
 		testPreferences(),
 	)
+
+	if got := scorer.experienceHardCeiling(); got != 2 {
+		t.Fatalf("ceiling = %.1f, want 2 (the candidate's total years)", got)
+	}
+}
+
+// With neither the config key nor the candidate's years available, the veto must
+// still be active rather than effectively unbounded.
+func TestExperienceHardCeilingFallsBackToConstantWhenYearsUnknown(t *testing.T) {
+	scorer := NewScorer(config.Candidate{}, testPreferences())
 
 	if got := scorer.experienceHardCeiling(); got != defaultExperienceHardCeiling {
 		t.Fatalf("ceiling = %.1f, want %.1f", got, defaultExperienceHardCeiling)

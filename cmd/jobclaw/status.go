@@ -31,9 +31,10 @@ type StatusReport struct {
 	// AwaitingApproval is what a human needs to decide on: scored or
 	// shortlisted jobs that have not been approved or rejected.
 	//
-	// This is the highest-scoring slice, not the whole backlog. Ordered by
-	// score descending and capped at defaultAwaitingApprovalLimit, overridable
-	// with --limit. AwaitingApprovalTotal carries the real count.
+	// This is the most actionable slice, not the whole backlog. Ordered by
+	// recommendation (APPLY, then SHORTLIST, then the rest) and by score within
+	// each group, capped at defaultAwaitingApprovalLimit and overridable with
+	// --limit. AwaitingApprovalTotal carries the real count.
 	//
 	// It used to return every row. With 2,150 pending jobs that made this
 	// document 597KB, or roughly 149,000 tokens, and an agent that runs
@@ -83,6 +84,24 @@ type AttentionItem struct {
 	Status        string `json:"status"`
 	Reason        string `json:"reason"`
 	NextCommand   string `json:"next_command"`
+}
+
+// recommendationRank orders jobs by how worth deciding on they are, lowest
+// first. A recommendation is advice rather than a wall — SCORED -> APPROVED is a
+// legal transition, so a SKIP can still be approved by hand — but it belongs
+// below everything actionable.
+func recommendationRank(summary JobSummary) int {
+	switch summary.Recommendation {
+	case string(scoring.RecommendationApply):
+		return 0
+	case string(scoring.RecommendationShortlist):
+		return 1
+	case "":
+		// Not scored yet, so there is nothing to act on.
+		return 3
+	default:
+		return 2
+	}
 }
 
 // defaultAwaitingApprovalLimit caps how many pending jobs `status` lists.
@@ -197,11 +216,23 @@ func runStatus(
 	// The true count, recorded before the list is trimmed.
 	report.AwaitingApprovalTotal = len(report.AwaitingApproval)
 
-	// Highest score first, so a cap keeps the jobs worth deciding on rather
-	// than whichever happened to be discovered first. Unscored entries sort
-	// last: they cannot be judged yet, so they are the least useful to show.
+	// Actionable first, then highest score within each group.
+	//
+	// Score alone is not the right order. A vetoed job keeps whatever score its
+	// stack and location earned, so sorting on score alone puts SKIPs at the top
+	// whenever a senior role happens to match the tech well — which is exactly
+	// the case the veto exists to remove. The list then still reads as "senior
+	// roles first", just with a SKIP label, and the reader is back to filtering
+	// by hand.
+	//
+	// Unscored entries sort last within their group: they cannot be judged yet,
+	// so they are the least useful thing to spend the cap on.
 	sort.SliceStable(report.AwaitingApproval, func(i, j int) bool {
 		left, right := report.AwaitingApproval[i], report.AwaitingApproval[j]
+
+		if lr, rr := recommendationRank(left), recommendationRank(right); lr != rr {
+			return lr < rr
+		}
 
 		switch {
 		case left.Score == nil && right.Score == nil:
@@ -311,7 +342,7 @@ func printStatusReport(report StatusReport) {
 	// header count and the number of rows disagree for no visible reason.
 	if report.AwaitingApprovalTotal > len(report.AwaitingApproval) {
 		fmt.Printf(
-			"Awaiting your approval (%d, showing top %d by score)\n",
+			"Awaiting your approval (%d, showing top %d: actionable first)\n",
 			report.AwaitingApprovalTotal,
 			len(report.AwaitingApproval),
 		)
