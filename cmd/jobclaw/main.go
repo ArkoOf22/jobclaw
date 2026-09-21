@@ -135,13 +135,34 @@ func main() {
 		case "sheet":
 			if len(os.Args) < 3 {
 				log.Fatal(
-					"usage: jobclaw sheet <init|sync> [--dry-run]",
+					"usage: jobclaw sheet <init|sync|rebuild> [--dry-run|--confirm]",
 				)
 			}
 
 			switch os.Args[2] {
 			case "init":
 				runSheetInit(db)
+
+			case "rebuild":
+				// Empties the sheet and writes it again from current scores.
+				// Destructive, so it previews unless --confirm is given, the
+				// same gate as submit and prune.
+				confirm := false
+
+				if len(os.Args) == 4 {
+					if os.Args[3] != "--confirm" {
+						log.Fatalf(
+							"unknown argument %q; usage: jobclaw sheet rebuild [--confirm]",
+							os.Args[3],
+						)
+					}
+
+					confirm = true
+				} else if len(os.Args) > 4 {
+					log.Fatal("usage: jobclaw sheet rebuild [--confirm]")
+				}
+
+				runSheetRebuild(confirm, db)
 
 			case "sync":
 				dryRun := false
@@ -163,7 +184,7 @@ func main() {
 
 			default:
 				log.Fatalf(
-					"unknown sheet command %q; usage: jobclaw sheet <init|sync>",
+					"unknown sheet command %q; usage: jobclaw sheet <init|sync|rebuild>",
 					os.Args[2],
 				)
 			}

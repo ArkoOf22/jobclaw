@@ -141,6 +141,88 @@ func (w *GogWriter) AppendHeader(ctx context.Context) error {
 	return w.appendValues(ctx, [][]string{Header()})
 }
 
+// dataRange covers every data row, leaving the header alone.
+//
+// Open-ended on purpose: the sheet grows, and a bounded range would silently
+// leave rows behind once it outgrew the bound.
+func (w *GogWriter) dataRange() string {
+	return fmt.Sprintf("%s!A2:L", w.config.SheetName)
+}
+
+// Snapshot returns the sheet's current contents verbatim, for backup before a
+// destructive operation.
+//
+// Read as raw bytes rather than parsed: the point is to preserve whatever is
+// there, including anything typed in by hand that JobClaw does not model.
+func (w *GogWriter) Snapshot(ctx context.Context) ([]byte, error) {
+	args := []string{
+		"sheets", "get",
+		w.config.SpreadsheetID,
+		w.config.SheetName,
+		"--json",
+		"--no-input",
+	}
+
+	if w.config.Account != "" {
+		args = append(args, "--account", w.config.Account)
+	}
+
+	command := exec.CommandContext(ctx, w.config.Binary, args...)
+
+	var stdout, stderr bytes.Buffer
+
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+
+	if err := command.Run(); err != nil {
+		return nil, fmt.Errorf(
+			"gog sheets get failed: %w: %s",
+			err,
+			summarize(stderr.String()),
+		)
+	}
+
+	return stdout.Bytes(), nil
+}
+
+// Clear removes every data row, keeping the header.
+//
+// Used by the rebuild path. Destructive and not reversible from JobClaw's side,
+// so callers must take a Snapshot first.
+func (w *GogWriter) Clear(ctx context.Context) error {
+	args := []string{
+		"sheets", "clear",
+		w.config.SpreadsheetID,
+		w.dataRange(),
+		"--no-input",
+	}
+
+	if w.config.Account != "" {
+		args = append(args, "--account", w.config.Account)
+	}
+
+	if w.config.DryRun {
+		args = append(args, "--dry-run")
+	}
+
+	command := exec.CommandContext(ctx, w.config.Binary, args...)
+
+	var stdout, stderr bytes.Buffer
+
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+
+	if err := command.Run(); err != nil {
+		return fmt.Errorf(
+			"gog sheets clear failed: %w: %s",
+			err,
+			summarize(stderr.String()),
+		)
+	}
+
+	return nil
+}
+
 func (w *GogWriter) appendValues(
 	ctx context.Context,
 	values [][]string,
