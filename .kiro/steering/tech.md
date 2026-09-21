@@ -245,9 +245,35 @@ Back up `data/jobclaw.db` first. There is no undo.
 ### Google Sheet review list
 
 ```bash
-jobclaw sheet init              # write the header row, once
-jobclaw sheet sync [--dry-run]  # append newly shortlisted jobs
+jobclaw sheet init                 # write the header row, once
+jobclaw sheet sync [--dry-run]     # append newly shortlisted jobs
+jobclaw sheet rebuild [--confirm]  # empty it and write it again from current scores
 ```
+
+### Rebuild when scoring rules change
+
+The sheet is append-only and rows never revise themselves. `sheet sync` skips
+anything already marked synced, so a row written as SHORTLIST keeps saying
+SHORTLIST even after a rescore vetoes that job. Tightening the experience ceiling
+left 168 such rows, including seven `Software Engineer III` roles — the candidate
+reads the sheet on a phone, so the scorer change had not reached where they look.
+
+`sheet rebuild` previews by default and only acts with `--confirm`, the same gate
+as `submit` and `prune`. It snapshots the sheet to `data/backups/sheet-*.json`
+first, clears the data rows, resets `sheet_synced_at`, then re-syncs in batches of
+200 until the queue drains.
+
+Order matters inside it: the sheet is cleared **before** the sync state is reset,
+because resetting first and then failing to clear would duplicate every row.
+
+**Anything past the approval gate stays on the sheet regardless of score.**
+`ListUnsyncedForSheet` used to filter on recommendation alone, so a job that had
+been applied to and then rescored to SKIP dropped off entirely — the record of
+committed work erased by a scoring change. Rebuild also seeds the Status cell from
+the job's real status rather than always writing `NEW`, for the same reason.
+
+A rebuild does not restore Resume links; those are written by `jobclaw resume
+<job_id>`, which is a paid model call, so they are not regenerated automatically.
 
 Live sheet: `1x38Aj46Dz1XQphTV1gjXUZNuIFXpexXvDhttzBNfl-4`, tab `Jobs`.
 
