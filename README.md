@@ -93,7 +93,9 @@ master resume + job  →  LLM (structured JSON, fact-guarded)  →  LaTeX templa
 - The JSON is rendered into a fixed LaTeX template and compiled with `pdflatex` (chosen over XeTeX-based engines because the template uses pdfTeX features for clean ATS text extraction).
 - The PDF is uploaded to a "JobClaw Resumes" Drive folder; the link lands on the sheet so you can open it from your phone.
 
-Models are pinned in `config/resume.yaml`: `google/gemini-2.5-flash` for resume prose, `mistralai/mistral-small-24b-instruct-2501` for questionnaire answers. Both run on Zero-Data-Retention endpoints, enforced per request.
+Models are set in `config/resume.yaml`. JobClaw calls **Google's Gemini API** (AI Studio) directly: `gemini-flash-latest` for resume prose, `gemini-flash-lite-latest` for questionnaire answers. These are stable "latest" aliases rather than pinned versions, so the config does not break when Google retires a specific model. The provider is swappable — `provider: openrouter` routes through OpenRouter instead, and both clients satisfy the same interface.
+
+**Privacy note.** Under OpenRouter, no-data-collection and Zero-Data-Retention are enforced per request and the call fails if unmet. Google's API has no per-request equivalent, so under the Google provider that guarantee is an operational precondition instead: the configured key **must be paid tier**, which Google excludes from training. Resume and questionnaire prompts carry candidate history, so a free-tier key here is not acceptable.
 
 ---
 
@@ -121,7 +123,9 @@ jobclaw/
 │   │                              #   preparation/readiness, submission adapters
 │   ├── drive/                     # gog-backed Google Drive uploader
 │   ├── sheet/                     # gog-backed Google Sheet writer
-│   ├── llm/openrouter/            # LLM client (ZDR-enforced)
+│   ├── llm/                       # LLM clients behind one interface
+│   │   ├── google/                #   Gemini API (current default)
+│   │   └── openrouter/            #   OpenRouter (ZDR-enforced, alternative)
 │   ├── config/                    # YAML config models
 │   └── database/                  # SQLite connection + migrations
 ├── config/                        # candidate.yaml, preferences.yaml, resume.yaml
@@ -168,13 +172,13 @@ Behaviour is driven by three YAML files in `config/`:
 
 - `candidate.yaml` — identity, contact (for the resume header), target roles, skills, experience, education.
 - `preferences.yaml` — locations, excluded titles, domains, tech preferences, and the shortlist threshold.
-- `resume.yaml` — master resume path, tailoring rules, and pinned models.
+- `resume.yaml` — master resume path, tailoring rules, LLM provider, and models.
 
 ### Environment (`.env` on the host, mode 600)
 
 | Variable | Purpose |
 | :--- | :--- |
-| `OPENROUTER_API_KEY` | LLM key (name is itself configurable via `resume.yaml`) |
+| `GEMINI_API_KEY` | Google Gemini API key, paid tier (name is configurable via `resume.yaml`; use `OPENROUTER_API_KEY` if `provider: openrouter`) |
 | `JOBCLAW_GREENHOUSE_BOARDS` | Comma-separated Greenhouse board tokens |
 | `JOBCLAW_SHEET_ID` | Review sheet spreadsheet ID |
 | `JOBCLAW_SHEET_ACCOUNT` | Google account `gog` acts as |
@@ -210,7 +214,7 @@ go test ./...
 - **Preparation ≠ execution.** Prepared data is inspectable and validatable before any side effect.
 - **Ambiguity is a real state.** An unknown external outcome stays locked for manual reconciliation; it is never silently converted to success or failure, and never auto-retried.
 - **Source isolation.** One failing discovery provider does not stop the others.
-- **Cost discipline.** Cheap ZDR-compliant models, one model call per resume (feeding both PDF and text), and no speculative generation.
+- **Cost discipline.** Cheap models (Gemini Flash tier), one model call per resume (feeding both PDF and text), and no speculative generation.
 
 ---
 

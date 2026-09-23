@@ -53,14 +53,21 @@ func (c ResumeLLMConfig) AnswersModelOrDefault() string {
 // with prompt content. Resume prompts embed the candidate's full employment
 // history, education, and contact details, so these are deliberately
 // restrictive by default.
+//
+// How these are honoured depends on the provider. OpenRouter enforces both per
+// request and fails loudly when unmet. Google's API has no per-request
+// equivalent, so under provider "google" these are not sent on the wire and the
+// guarantee rests on the configured key being paid tier. See the google package
+// doc comment.
 type ResumeLLMPrivacy struct {
 	// DenyDataCollection maps to OpenRouter's provider.data_collection="deny".
 	// When true, only providers that do not store prompt data may serve the
 	// request. Requests fail rather than silently falling back to a provider
-	// that trains on inputs.
+	// that trains on inputs. Not transmitted under the Google provider.
 	DenyDataCollection bool `yaml:"deny_data_collection"`
 
 	// RequireZeroDataRetention maps to OpenRouter's provider.zdr=true,
 	// restricting routing to endpoints with a Zero Data Retention policy.
+	// Not transmitted under the Google provider.
 	RequireZeroDataRetention bool `yaml:"require_zero_data_retention"`
 }

@@ -21,6 +21,7 @@ import (
 	"jobclaw/internal/discovery/jobspy"
 	"jobclaw/internal/drive"
 	"jobclaw/internal/job"
+	"jobclaw/internal/llm/google"
 	"jobclaw/internal/llm/openrouter"
 	"jobclaw/internal/scoring"
 	"jobclaw/internal/sheet"
@@ -38,6 +39,44 @@ const (
 	// form needs no configuration at all.
 	defaultGreenhouseBaseURL = "https://boards-api.greenhouse.io/v1"
 )
+
+// newLLMClient builds the LLM client for the configured provider. It is the one
+// place that knows about concrete provider packages, so every command wires the
+// same way and switching providers is a config change rather than a code change.
+//
+// The returned value satisfies application.ResumeLLM. The privacy settings are
+// forwarded to both providers, but they behave differently: OpenRouter enforces
+// them per request and fails loudly when unmet, whereas Google has no
+// per-request equivalent and instead relies on the key being paid tier. See the
+// google package comment.
+func newLLMClient(
+	llmConfig config.ResumeLLMConfig,
+	model string,
+	apiKey string,
+) (application.ResumeLLM, error) {
+	provider := strings.ToLower(strings.TrimSpace(llmConfig.Provider))
+
+	switch provider {
+	case "google":
+		return google.NewClient(google.Config{
+			APIKey:                   apiKey,
+			Model:                    model,
+			BaseURL:                  llmConfig.BaseURL,
+			DenyDataCollection:       llmConfig.Privacy.DenyDataCollection,
+			RequireZeroDataRetention: llmConfig.Privacy.RequireZeroDataRetention,
+		})
+	case "openrouter", "":
+		return openrouter.NewClient(openrouter.Config{
+			APIKey:                   apiKey,
+			Model:                    model,
+			BaseURL:                  llmConfig.BaseURL,
+			DenyDataCollection:       llmConfig.Privacy.DenyDataCollection,
+			RequireZeroDataRetention: llmConfig.Privacy.RequireZeroDataRetention,
+		})
+	default:
+		return nil, fmt.Errorf("unsupported resume LLM provider %q", llmConfig.Provider)
+	}
+}
 
 func main() {
 	databasePath := getEnvOrDefault("JOBCLAW_DB_PATH", defaultDatabasePath)
@@ -714,14 +753,10 @@ func runResume(
 		},
 	)
 
-	llmClient, err := openrouter.NewClient(
-		openrouter.Config{
-			APIKey:                   apiKey,
-			Model:                    resumeConfig.LLM.Model,
-			BaseURL:                  resumeConfig.LLM.BaseURL,
-			DenyDataCollection:       resumeConfig.LLM.Privacy.DenyDataCollection,
-			RequireZeroDataRetention: resumeConfig.LLM.Privacy.RequireZeroDataRetention,
-		},
+	llmClient, err := newLLMClient(
+		resumeConfig.LLM,
+		resumeConfig.LLM.Model,
+		apiKey,
 	)
 	if err != nil {
 		log.Fatalf("initialize resume LLM: %v", err)
@@ -1332,16 +1367,10 @@ func buildResumeGenerator(
 
 	promptBuilder := application.NewResumePromptBuilder(resumeSource)
 
-	llmClient, err := openrouter.NewClient(
-		openrouter.Config{
-			APIKey:  apiKey,
-			Model:   resumeConfig.LLM.Model,
-			BaseURL: resumeConfig.LLM.BaseURL,
-			DenyDataCollection: resumeConfig.LLM.Privacy.
-				DenyDataCollection,
-			RequireZeroDataRetention: resumeConfig.LLM.Privacy.
-				RequireZeroDataRetention,
-		},
+	llmClient, err := newLLMClient(
+		resumeConfig.LLM,
+		resumeConfig.LLM.Model,
+		apiKey,
 	)
 	if err != nil {
 		log.Fatalf("initialize resume LLM: %v", err)
@@ -1518,16 +1547,10 @@ func runQuestionnaire(
 		log.Fatalf("build candidate context: %v", err)
 	}
 
-	llmClient, err := openrouter.NewClient(
-		openrouter.Config{
-			APIKey:  apiKey,
-			Model:   resumeConfig.LLM.Model,
-			BaseURL: resumeConfig.LLM.BaseURL,
-			DenyDataCollection: resumeConfig.LLM.Privacy.
-				DenyDataCollection,
-			RequireZeroDataRetention: resumeConfig.LLM.Privacy.
-				RequireZeroDataRetention,
-		},
+	llmClient, err := newLLMClient(
+		resumeConfig.LLM,
+		resumeConfig.LLM.Model,
+		apiKey,
 	)
 	if err != nil {
 		log.Fatalf("initialize questionnaire LLM: %v", err)
@@ -2257,16 +2280,10 @@ func buildQuestionAnswerLLM(
 	// Questionnaire answers are short factual strings, so they use the cheaper
 	// answers model. Privacy constraints are identical: these answers are still
 	// personal data about the candidate.
-	llmClient, err := openrouter.NewClient(
-		openrouter.Config{
-			APIKey:  apiKey,
-			Model:   resumeConfig.LLM.AnswersModelOrDefault(),
-			BaseURL: resumeConfig.LLM.BaseURL,
-			DenyDataCollection: resumeConfig.LLM.Privacy.
-				DenyDataCollection,
-			RequireZeroDataRetention: resumeConfig.LLM.Privacy.
-				RequireZeroDataRetention,
-		},
+	llmClient, err := newLLMClient(
+		resumeConfig.LLM,
+		resumeConfig.LLM.AnswersModelOrDefault(),
+		apiKey,
 	)
 	if err != nil {
 		log.Fatalf("initialize questionnaire LLM: %v", err)

@@ -37,14 +37,14 @@ func TestLoad(t *testing.T) {
 		)
 	}
 
-	if cfg.Resume.Resume.LLM.Provider != "openrouter" {
+	if cfg.Resume.Resume.LLM.Provider != "google" {
 		t.Fatalf(
 			"unexpected resume LLM provider: %q",
 			cfg.Resume.Resume.LLM.Provider,
 		)
 	}
 
-	if cfg.Resume.Resume.LLM.APIKeyEnv != "OPENROUTER_API_KEY" {
+	if cfg.Resume.Resume.LLM.APIKeyEnv != "GEMINI_API_KEY" {
 		t.Fatalf(
 			"unexpected API key env: %q",
 			cfg.Resume.Resume.LLM.APIKeyEnv,

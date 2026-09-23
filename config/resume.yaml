@@ -11,29 +11,53 @@ resume:
     allow_experience_invention: false
 
   llm:
-    provider: "openrouter"
+    # "google" calls Google's Generative Language API (AI Studio "Gemini API")
+    # directly. "openrouter" routes through OpenRouter instead; both are wired
+    # in cmd/jobclaw newLLMClient and satisfy the same interface, so this is a
+    # pure config switch.
+    provider: "google"
 
-    # Pinned deliberately. "openrouter/auto" delegates provider choice to
-    # OpenRouter, which means the candidate's full resume could be sent to any
-    # provider in the pool, including ones that train on inputs. Resume prompts
-    # carry employment history, education, and contact details, so the
-    # destination must be predictable.
-    # Resume tailoring: prose a recruiter reads, so quality matters. Gemini
-    # 2.5 Flash is roughly 8x cheaper than claude-sonnet-4.5 ($0.30/$2.50 vs
-    # $3/$15 per million) and is available on ZDR endpoints, so the privacy
-    # constraints below still hold.
-    model: "google/gemini-2.5-flash"
+    # Bare Gemini model IDs. Google's API wants "gemini-flash-latest", NOT the
+    # "google/..." form OpenRouter uses.
+    #
+    # These are the stable "latest" ALIASES rather than pinned versions, on
+    # purpose. A pinned version rots: this config originally named
+    # "gemini-2.5-flash", which Google's API now answers with a 404 and a
+    # deprecation notice ("no longer available to new users") for keys that
+    # don't already have access. The aliases always resolve to the current
+    # Flash tier, so the config does not break when a specific version is
+    # retired. Both were verified live against this key returning HTTP 200.
+    #
+    # Resume tailoring is prose a recruiter reads, so it uses full Flash.
+    model: "gemini-flash-latest"
 
-    # Questionnaire answers: short factual strings like "Yes" or "India".
-    # Paying resume rates for those is waste. Also ZDR-available.
-    answers_model: "mistralai/mistral-small-24b-instruct-2501"
+    # Questionnaire answers are short factual strings like "Yes" or "India", so
+    # they use the cheaper Flash-Lite alias. Google cannot serve the Mistral
+    # model this used to name, so it had to change with the provider.
+    answers_model: "gemini-flash-lite-latest"
 
-    base_url: "https://openrouter.ai/api/v1"
-    api_key_env: "OPENROUTER_API_KEY"
+    # Default is Google's v1beta Generative Language endpoint when empty. Set
+    # here for clarity; the google client falls back to the same value.
+    base_url: "https://generativelanguage.googleapis.com/v1beta"
 
-    # Enforced per request, not just as an account default, so the guarantee
-    # travels with the code. If no provider satisfies these constraints the
-    # request fails loudly rather than quietly routing to one that retains data.
+    # AI Studio key, "AIza...". The variable *name* is what matters here; the
+    # value lives in the environment.
+    api_key_env: "GEMINI_API_KEY"
+
+    # PRIVACY — READ BEFORE CHANGING THE PROVIDER.
+    #
+    # Under provider "openrouter" these are enforced per request: OpenRouter
+    # restricts routing to data_collection="deny" and zdr=true endpoints and
+    # fails loudly when none qualifies.
+    #
+    # Under provider "google" they are NOT sent on the wire, because Google's
+    # API has no per-request equivalent. The guarantee becomes an operational
+    # precondition instead: the GEMINI_API_KEY above MUST be a PAID-TIER key.
+    # Google does not train on paid-tier prompts; free-tier keys are used for
+    # product improvement and would violate deny_data_collection. Resume and
+    # questionnaire prompts carry the candidate's full history and contact
+    # details, so a free-tier key here is not acceptable. See the google
+    # package doc comment for the full rationale.
     privacy:
       deny_data_collection: true
       require_zero_data_retention: true
